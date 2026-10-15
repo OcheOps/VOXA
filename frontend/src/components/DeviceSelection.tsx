@@ -1,34 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { RefreshCw, Mic, Speaker } from 'lucide-react';
 import { AudioLevelMeter, CompactAudioLevelMeter } from './AudioLevelMeter';
 import { AudioBackendSelector } from './AudioBackendSelector';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import Analytics from '@/lib/analytics';
-
-export interface AudioDevice {
-  name: string;
-  device_type: 'Input' | 'Output';
-}
+import { useVoxaClient } from '@/clients';
+import type { AudioLevelData, RecordingDevice } from '@/clients';
 
 export interface SelectedDevices {
   micDevice: string | null;
   systemDevice: string | null;
-}
-
-export interface AudioLevelData {
-  device_name: string;
-  device_type: string;
-  rms_level: number;
-  peak_level: number;
-  is_active: boolean;
-}
-
-export interface AudioLevelUpdate {
-  timestamp: number;
-  levels: AudioLevelData[];
 }
 
 interface DeviceSelectionProps {
@@ -38,23 +20,25 @@ interface DeviceSelectionProps {
 }
 
 export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = false }: DeviceSelectionProps) {
-  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const { recording: recordingClient } = useVoxaClient();
+  const [devices, setDevices] = useState<RecordingDevice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [audioLevels, setAudioLevels] = useState<Map<string, AudioLevelData>>(new Map());
   const [isMonitoring, setIsMonitoring] = useState(false);
+  const isMonitoringRef = useRef(false);
   const [showLevels, setShowLevels] = useState(false);
 
   // Filter devices by type
-  const inputDevices = devices.filter(device => device.device_type === 'Input');
-  const outputDevices = devices.filter(device => device.device_type === 'Output');
+  const inputDevices = devices.filter(device => device.type === 'input');
+  const outputDevices = devices.filter(device => device.type === 'output');
 
   // Fetch available audio devices
   const fetchDevices = async () => {
     try {
       setError(null);
-      const result = await invoke<AudioDevice[]>('get_audio_devices');
+      const result = await recordingClient.listDevices();
       setDevices(result);
       console.log('Fetched audio devices:', result);
     } catch (err) {
@@ -95,8 +79,8 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     // recording — never reset the device a live recording is using).
     if (loading || disabled) return;
 
-    const inputs = devices.filter(d => d.device_type === 'Input');
-    const outputs = devices.filter(d => d.device_type === 'Output');
+    const inputs = devices.filter(d => d.type === 'input');
+    const outputs = devices.filter(d => d.type === 'output');
 
     let next = selectedDevices;
     // Guard on a non-empty list per direction so a transient phantom-empty
@@ -127,38 +111,19 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
 
   // Set up audio level event listener
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    const unsubscribe = recordingClient.onAudioLevels(levelUpdate => {
+      const newLevels = new Map<string, AudioLevelData>();
+      levelUpdate.levels.forEach(level => newLevels.set(level.deviceName, level));
+      setAudioLevels(newLevels);
+    });
 
-    const setupAudioLevelListener = async () => {
-      try {
-        unlisten = await listen<AudioLevelUpdate>('audio-levels', (event) => {
-          const levelUpdate = event.payload;
-          const newLevels = new Map<string, AudioLevelData>();
-
-          levelUpdate.levels.forEach(level => {
-            newLevels.set(level.device_name, level);
-          });
-
-          setAudioLevels(newLevels);
-        });
-      } catch (err) {
-        console.error('Failed to setup audio level listener:', err);
-      }
-    };
-
-    setupAudioLevelListener();
-
-    // Cleanup function
     return () => {
-      if (unlisten) {
-        unlisten();
-      }
-      // Stop monitoring when component unmounts
-      if (isMonitoring) {
-        stopAudioLevelMonitoring();
+      unsubscribe();
+      if (isMonitoringRef.current) {
+        void recordingClient.stopAudioLevelMonitoring();
       }
     };
-  }, [isMonitoring]);
+  }, [recordingClient]);
 
   // Handle device refresh
   const handleRefresh = async () => {
@@ -234,8 +199,9 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
         return;
       }
 
-      await invoke('start_audio_level_monitoring', { deviceNames });
+      await recordingClient.startAudioLevelMonitoring(deviceNames);
       setIsMonitoring(true);
+      isMonitoringRef.current = true;
       setShowLevels(true);
       console.log('Started audio level monitoring for input devices:', deviceNames);
     } catch (err) {
@@ -247,8 +213,9 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
   // Stop audio level monitoring
   const stopAudioLevelMonitoring = async () => {
     try {
-      await invoke('stop_audio_level_monitoring');
+      await recordingClient.stopAudioLevelMonitoring();
       setIsMonitoring(false);
+      isMonitoringRef.current = false;
       setAudioLevels(new Map());
       console.log('Stopped audio level monitoring');
     } catch (err) {
@@ -333,7 +300,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
               {inputDevices.map((device) => (
                 <SelectItem
                   key={device.name}
-                  value={`${device.name} (${device.device_type.toLowerCase()})`}
+                  value={`${device.name} (${device.type})`}
                 >
                   {device.name}
                 </SelectItem>
@@ -358,17 +325,17 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
                       </span>
                       {levelData && (
                         <CompactAudioLevelMeter
-                          rmsLevel={levelData.rms_level}
-                          peakLevel={levelData.peak_level}
-                          isActive={levelData.is_active}
+                          rmsLevel={levelData.rmsLevel}
+                          peakLevel={levelData.peakLevel}
+                          isActive={levelData.isActive}
                         />
                       )}
                     </div>
                     {levelData && (
                       <AudioLevelMeter
-                        rmsLevel={levelData.rms_level}
-                        peakLevel={levelData.peak_level}
-                        isActive={levelData.is_active}
+                        rmsLevel={levelData.rmsLevel}
+                        peakLevel={levelData.peakLevel}
+                        isActive={levelData.isActive}
                         deviceName={device.name}
                         size="small"
                       />
@@ -402,7 +369,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
               {outputDevices.map((device) => (
                 <SelectItem
                   key={device.name}
-                  value={`${device.name} (${device.device_type.toLowerCase()})`}
+                  value={`${device.name} (${device.type})`}
                 >
                   {device.name}
                 </SelectItem>

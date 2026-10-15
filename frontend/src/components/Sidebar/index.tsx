@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useImportDialog } from '@/contexts/ImportDialogContext';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useVoxaClient } from '@/clients';
 
 import {
   Dialog,
@@ -40,6 +41,7 @@ interface SidebarItem {
 }
 
 const Sidebar: React.FC = () => {
+  const { meetings: meetingClient } = useVoxaClient();
   const router = useRouter();
   const pathname = usePathname();
   const {
@@ -325,10 +327,7 @@ const Sidebar: React.FC = () => {
     };
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('api_delete_meeting', {
-        meetingId: itemId,
-      });
+      await meetingClient.delete(itemId);
       console.log('Meeting deleted successfully');
       const updatedMeetings = meetings.filter((m: CurrentMeeting) => m.id !== itemId);
       setMeetings(updatedMeetings);
@@ -384,10 +383,7 @@ const Sidebar: React.FC = () => {
     }
 
     try {
-      await invoke('api_save_meeting_title', {
-        meetingId: meetingId,
-        title: newTitle,
-      });
+      await meetingClient.rename(meetingId, newTitle);
 
       // Update local state
       const updatedMeetings = meetings.map((m: CurrentMeeting) =>
@@ -690,7 +686,7 @@ const Sidebar: React.FC = () => {
             {!isCollapsed && (
               <div className="p-3">
                 {/* <span className="text-lg text-center border rounded-full bg-blue-50 border-white font-semibold text-gray-700 mb-2 block items-center">
-                  <span>Meetily</span>
+                  <span>Voxa</span>
                 </span> */}
                 <Logo isCollapsed={isCollapsed} />
 

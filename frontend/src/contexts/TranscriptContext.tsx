@@ -4,9 +4,8 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { Transcript, TranscriptUpdate } from '@/types';
 import { toast } from 'sonner';
 import { useRecordingState } from './RecordingStateContext';
-import { transcriptService } from '@/services/transcriptService';
-import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
+import { useVoxaClient } from '@/clients';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -25,6 +24,7 @@ interface TranscriptContextType {
 const TranscriptContext = createContext<TranscriptContextType | undefined>(undefined);
 
 export function TranscriptProvider({ children }: { children: ReactNode }) {
+  const { recording: recordingClient, transcription: transcriptionClient } = useVoxaClient();
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [meetingTitle, setMeetingTitle] = useState('+ New Call');
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
@@ -83,6 +83,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
   // Initialize IndexedDB and listen for recording-started/stopped events
   useEffect(() => {
+    let cancelled = false;
     let unlistenRecordingStarted: (() => void) | undefined;
     let unlistenRecordingStopped: (() => void) | undefined;
 
@@ -90,9 +91,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       try {
         // Initialize IndexedDB
         await indexedDBService.init();
+        if (cancelled) return;
 
         // Listen for recording-started event
-        unlistenRecordingStarted = await recordingService.onRecordingStarted(async () => {
+        unlistenRecordingStarted = recordingClient.onStarted(async () => {
           try {
             // Generate unique meeting ID
             const meetingId = `meeting-${Date.now()}`;
@@ -103,7 +105,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             console.log('[Recording Started] 💾 IndexedDB meeting ID stored:', meetingId);
 
             // Get meeting name
-            const meetingName = await recordingService.getRecordingMeetingName();
+            const meetingName = await recordingClient.getMeetingName();
 
             // Use a better fallback that matches the backend's naming pattern
             const effectiveTitle = meetingName || `Meeting ${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}`;
@@ -125,8 +127,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             // Fetch folder path from backend and update metadata
             // This ensures folder path is persisted even if app crashes
             try {
-              const { invoke } = await import('@tauri-apps/api/core');
-              const folderPath = await invoke<string>('get_meeting_folder_path');
+              const folderPath = await recordingClient.getSessionFolderPath();
               if (folderPath) {
                 const metadata = await indexedDBService.getMeetingMetadata(meetingId);
                 if (metadata) {
@@ -143,14 +144,14 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         });
 
         // Listen for recording-stopped event
-        unlistenRecordingStopped = await recordingService.onRecordingStopped(async (payload) => {
+        unlistenRecordingStopped = recordingClient.onStopped(async (payload) => {
           try {
             if (currentMeetingId) {
               // Update folder path in IndexedDB
               const metadata = await indexedDBService.getMeetingMetadata(currentMeetingId);
 
-              if (metadata && payload.folder_path) {
-                metadata.folderPath = payload.folder_path;
+              if (metadata && payload.folderPath) {
+                metadata.folderPath = payload.folderPath;
                 await indexedDBService.saveMeetingMetadata(metadata);
               }
             }
@@ -166,6 +167,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     setupRecordingListeners();
 
     return () => {
+      cancelled = true;
       if (unlistenRecordingStarted) {
         unlistenRecordingStarted();
         console.log('🧹 Recording started listener cleaned up');
@@ -175,7 +177,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         console.log('🧹 Recording stopped listener cleaned up');
       }
     };
-  }, [currentMeetingId]);
+  }, [currentMeetingId, recordingClient]);
 
   // Main transcript buffering logic with sequence_id ordering
   useEffect(() => {
@@ -285,7 +287,19 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     const setupListener = async () => {
       try {
         console.log('🔥 Setting up MAIN transcript listener during component initialization...');
-        unlistenFn = await transcriptService.onTranscriptUpdate((update) => {
+        unlistenFn = transcriptionClient.onUpdate((event) => {
+          const update: TranscriptUpdate = {
+            text: event.text,
+            timestamp: event.timestamp,
+            source: event.source,
+            sequence_id: event.sequenceId,
+            chunk_start_time: event.chunkStartTime,
+            is_partial: event.isPartial,
+            confidence: event.confidence,
+            audio_start_time: event.audioStartTime,
+            audio_end_time: event.audioEndTime,
+            duration: event.duration,
+          };
           const now = Date.now();
           console.log('🎯 MAIN LISTENER: Received transcript update:', {
             sequence_id: update.sequence_id,
@@ -334,6 +348,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
           // Process buffer with minimal delay for immediate UI updates (serial workers = sequential order)
           processingTimer = setTimeout(processBufferedTranscripts, 10);
+        }, error => {
+          console.error('❌ Failed to setup MAIN transcript listener:', error);
+          alert('Failed to setup transcript listener. Check console for details.');
         });
         console.log('✅ MAIN transcript listener setup complete');
       } catch (error) {
@@ -356,7 +373,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         console.log('🧹 CLEANUP: MAIN transcript listener cleaned up');
       }
     };
-  }, [currentMeetingId]); // Add currentMeetingId dependency
+  }, [currentMeetingId, transcriptionClient]); // Add currentMeetingId dependency
 
   // Sync transcript history and meeting name from backend on reload
   // This fixes the issue where reloading during active recording causes state desync
@@ -368,7 +385,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
           console.log('[Reload Sync] Recording active after reload, syncing transcript history...');
 
           // Fetch transcript history from backend
-          const history = await transcriptService.getTranscriptHistory();
+          const history = await transcriptionClient.getHistory();
           console.log(`[Reload Sync] Retrieved ${history.length} transcript segments from backend`);
 
           // Convert backend format to frontend Transcript format
@@ -389,7 +406,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
           console.log('[Reload Sync] ✅ Transcript history synced successfully');
 
           // Fetch meeting name from backend
-          const meetingName = await recordingService.getRecordingMeetingName();
+          const meetingName = await recordingClient.getMeetingName();
           if (meetingName) {
             console.log('[Reload Sync] Retrieved meeting name:', meetingName);
             setMeetingTitle(meetingName);
@@ -402,7 +419,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     };
 
     syncFromBackend();
-  }, [recordingState.isRecording]); // Run when recording state changes
+  }, [recordingState.isRecording, recordingClient, transcriptionClient]); // Run when recording state changes
 
   // Manual transcript update handler (for RecordingControls component)
   const addTranscript = useCallback((update: TranscriptUpdate) => {

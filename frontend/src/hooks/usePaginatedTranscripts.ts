@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Transcript, MeetingMetadata, PaginatedTranscriptsResponse, TranscriptSegmentData } from "@/types";
+import { useVoxaClient } from "@/clients";
 
 const DEFAULT_PAGE_SIZE = 100;
 
@@ -44,6 +44,7 @@ export function usePaginatedTranscripts({
     meetingId,
     initialTimestamp,
 }: UsePaginatedTranscriptsProps): UsePaginatedTranscriptsReturn {
+    const { meetings: meetingClient } = useVoxaClient();
     const [metadata, setMetadata] = useState<MeetingMetadata | null>(null);
     const [transcripts, setTranscripts] = useState<Transcript[]>([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -83,9 +84,7 @@ export function usePaginatedTranscripts({
         if (!meetingId || !isCurrentRequest(requestId)) return null;
 
         try {
-            const data = await invoke<MeetingMetadata>('api_get_meeting_metadata', {
-                meetingId,
-            });
+            const data = await meetingClient.getMetadata(meetingId);
             if (!isCurrentRequest(requestId)) return null;
             setMetadata(data);
             return data;
@@ -95,7 +94,7 @@ export function usePaginatedTranscripts({
             setError('Failed to load meeting details');
             return null;
         }
-    }, [meetingId, isCurrentRequest]);
+    }, [meetingId, isCurrentRequest, meetingClient]);
 
     // Load transcripts at specific offset
     const loadTranscriptsAtOffset = useCallback(async (
@@ -106,14 +105,10 @@ export function usePaginatedTranscripts({
         if (!meetingId || !isCurrentRequest(requestId)) return [];
 
         try {
-            const response = await invoke<PaginatedTranscriptsResponse>(
-                'api_get_meeting_transcripts',
-                {
-                    meetingId,
-                    limit: DEFAULT_PAGE_SIZE,
-                    offset,
-                }
-            );
+            const response = await meetingClient.getTranscripts(meetingId, {
+                limit: DEFAULT_PAGE_SIZE,
+                offset,
+            });
 
             if (!isCurrentRequest(requestId)) return [];
             const newTranscripts = response.transcripts;
@@ -144,7 +139,7 @@ export function usePaginatedTranscripts({
             setError('Failed to load transcripts');
             return [];
         }
-    }, [meetingId, isCurrentRequest]);
+    }, [meetingId, isCurrentRequest, meetingClient]);
 
     // Load next page with debounce protection
     const loadMore = useCallback(async () => {

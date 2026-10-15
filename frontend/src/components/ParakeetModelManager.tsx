@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import {
   ModelStatus,
   ParakeetAPI,
-  ParakeetDownloadProgressEvent,
   ParakeetModelInfo,
   formatFileSize,
   getModelDisplayInfo,
   getModelDisplayName
 } from '../lib/parakeet';
+import { useVoxaClient } from '@/clients';
 
 interface ParakeetModelManagerProps {
   selectedModel?: string;
@@ -26,6 +25,7 @@ export function ParakeetModelManager({
   className = '',
   autoSave = false
 }: ParakeetModelManagerProps) {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [models, setModels] = useState<ParakeetModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -86,17 +86,20 @@ export function ParakeetModelManager({
 
   // Set up event listeners for download progress
   useEffect(() => {
-    let disposed = false;
-    let registeredUnlisteners: Array<() => void> = [];
-
-    const setupListeners = async () => {
-      console.log('[ParakeetModelManager] Setting up event listeners...');
-
-      const registrations = await Promise.allSettled([
-        listen<ParakeetDownloadProgressEvent>(
-          'parakeet-model-download-progress',
-          (event) => {
-            const { modelName, progress, status } = event.payload;
+    console.log('[ParakeetModelManager] Setting up event listeners...');
+    const handleRegistrationError = (error: unknown) => {
+      const message = error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : 'Failed to listen for Parakeet model updates';
+      setListenersReady(false);
+      setError(message);
+      setLoading(false);
+    };
+    const unlistenProgress = transcriptionClient.onModelDownloadProgress(event => {
+            if (event.provider !== 'parakeet') return;
+            const { modelName, progress, status } = event;
             if (status === 'cancelled') {
               latestStatusByModelRef.current.set(modelName, 'Missing');
               progressThrottleRef.current.delete(modelName);
@@ -141,12 +144,10 @@ export function ParakeetModelManager({
                 )
               );
             }
-          }
-        ),
-        listen<{ modelName: string }>(
-          'parakeet-model-download-complete',
-          (event) => {
-            const { modelName } = event.payload;
+    }, handleRegistrationError);
+    const unlistenComplete = transcriptionClient.onModelDownloadComplete(event => {
+            if (event.provider !== 'parakeet') return;
+            const { modelName } = event;
             const displayInfo = getModelDisplayInfo(modelName);
             const displayName = displayInfo?.friendlyName || modelName;
             latestStatusByModelRef.current.set(modelName, 'Available');
@@ -181,12 +182,10 @@ export function ParakeetModelManager({
                 saveModelSelection(modelName);
               }
             }
-          }
-        ),
-        listen<{ modelName: string; error: string }>(
-          'parakeet-model-download-error',
-          (event) => {
-            const { modelName, error } = event.payload;
+    }, handleRegistrationError);
+    const unlistenError = transcriptionClient.onModelDownloadError(event => {
+            if (event.provider !== 'parakeet') return;
+            const { modelName, error } = event;
             const displayInfo = getModelDisplayInfo(modelName);
             const displayName = displayInfo?.friendlyName || modelName;
             latestStatusByModelRef.current.set(modelName, { Error: error });
@@ -217,43 +216,16 @@ export function ParakeetModelManager({
                 onClick: () => downloadModel(modelName)
               }
             });
-          }
-        )
-      ]);
-
-      const unlisteners = registrations.flatMap(result =>
-        result.status === 'fulfilled' ? [result.value] : []
-      );
-      const failedRegistration = registrations.find(
-        (result): result is PromiseRejectedResult => result.status === 'rejected'
-      );
-
-      if (disposed || failedRegistration) {
-        unlisteners.forEach(unlisten => unlisten());
-        if (!disposed && failedRegistration) {
-          const message = failedRegistration.reason instanceof Error
-            ? failedRegistration.reason.message
-            : typeof failedRegistration.reason === 'string'
-              ? failedRegistration.reason
-              : 'Failed to listen for Parakeet model updates';
-          setError(message);
-          setLoading(false);
-        }
-        return;
-      }
-
-      registeredUnlisteners = unlisteners;
-      setListenersReady(true);
-    };
-
-    setupListeners();
+    }, handleRegistrationError);
+    setListenersReady(true);
 
     return () => {
       console.log('[ParakeetModelManager] Cleaning up event listeners...');
-      disposed = true;
-      registeredUnlisteners.forEach(unlisten => unlisten());
+      unlistenProgress();
+      unlistenComplete();
+      unlistenError();
     };
-  }, []); // Empty dependency array - listeners use refs for stable callbacks
+  }, [transcriptionClient]);
 
   const saveModelSelection = async (modelName: string) => {
     try {

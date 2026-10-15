@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -14,6 +13,7 @@ import {
   WhisperAPI
 } from '../lib/whisper';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { useVoxaClient } from '@/clients';
 
 interface ModelManagerProps {
   selectedModel?: string;
@@ -28,6 +28,7 @@ export function ModelManager({
   className = '',
   autoSave = false
 }: ModelManagerProps) {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -188,18 +189,10 @@ export function ModelManager({
 
   // Set up event listeners for download progress
   useEffect(() => {
-    let unlistenProgress: (() => void) | null = null;
-    let unlistenComplete: (() => void) | null = null;
-    let unlistenError: (() => void) | null = null;
-
-    const setupListeners = async () => {
-      console.log('[ModelManager] Setting up event listeners...');
-
-      // Download progress with throttling
-      unlistenProgress = await listen<{ modelName: string; progress: number }>(
-        'model-download-progress',
-        (event) => {
-          const { modelName, progress } = event.payload;
+    console.log('[ModelManager] Setting up event listeners...');
+    const unlistenProgress = transcriptionClient.onModelDownloadProgress(event => {
+          if (event.provider !== 'localWhisper') return;
+          const { modelName, progress } = event;
           const now = Date.now();
           const throttleData = progressThrottleRef.current.get(modelName);
 
@@ -220,14 +213,11 @@ export function ModelManager({
               )
             );
           }
-        }
-      );
+    });
 
-      // Download complete
-      unlistenComplete = await listen<{ modelName: string }>(
-        'model-download-complete',
-        (event) => {
-          const { modelName } = event.payload;
+    const unlistenComplete = transcriptionClient.onModelDownloadComplete(event => {
+          if (event.provider !== 'localWhisper') return;
+          const { modelName } = event;
           const model = models.find(m => m.name === modelName);
           const displayName = getDisplayName(modelName);
 
@@ -262,14 +252,11 @@ export function ModelManager({
               saveModelSelection(modelName);
             }
           }
-        }
-      );
+    });
 
-      // Download error
-      unlistenError = await listen<{ modelName: string; error: string }>(
-        'model-download-error',
-        (event) => {
-          const { modelName, error } = event.payload;
+    const unlistenError = transcriptionClient.onModelDownloadError(event => {
+          if (event.provider !== 'localWhisper') return;
+          const { modelName, error } = event;
           const displayName = getDisplayName(modelName);
 
           clearCancellationReconciliation(modelName);
@@ -299,24 +286,20 @@ export function ModelManager({
               onClick: () => downloadModel(modelName)
             }
           });
-        }
-      );
-    };
-
-    setupListeners();
+    });
 
     return () => {
       console.log('[ModelManager] Cleaning up event listeners...');
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenComplete) unlistenComplete();
-      if (unlistenError) unlistenError();
+      unlistenProgress();
+      unlistenComplete();
+      unlistenError();
       for (const timer of cancellationReconcileTimersRef.current.values()) {
         clearTimeout(timer);
       }
       cancellationReconcileTimersRef.current.clear();
       cancellationReconciliationModelsRef.current.clear();
     };
-  }, []); // Empty dependency array - listeners use refs for stable callbacks
+  }, [transcriptionClient]);
 
   const saveModelSelection = async (modelName: string) => {
     try {

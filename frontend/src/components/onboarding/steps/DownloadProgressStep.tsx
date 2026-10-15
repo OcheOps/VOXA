@@ -8,7 +8,7 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getSummaryModelSizeLabel, getSummaryModelSizeMb } from '@/lib/onboarding-summary-model';
-import type { ParakeetDownloadProgressEvent } from '@/lib/parakeet';
+import { useVoxaClient } from '@/clients';
 
 const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
@@ -24,6 +24,7 @@ interface DownloadState {
 }
 
 export function DownloadProgressStep() {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const {
     goNext,
     selectedSummaryModel,
@@ -196,10 +197,9 @@ export function DownloadProgressStep() {
 
   // Listen to Parakeet download progress
   useEffect(() => {
-    const unlistenProgress = listen<ParakeetDownloadProgressEvent>(
-      'parakeet-model-download-progress',
-      (event) => {
-        const { modelName, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
+    const unlistenProgress = transcriptionClient.onModelDownloadProgress(event => {
+        if (event.provider !== 'parakeet') return;
+        const { modelName, progress, status } = event;
         if (modelName !== PARAKEET_MODEL) return;
 
         if (status === 'cancelled') {
@@ -218,46 +218,39 @@ export function DownloadProgressStep() {
           ...prev,
           status: status === 'completed' ? 'completed' : 'downloading',
           progress,
-          downloadedMb: downloaded_mb ?? prev.downloadedMb,
-          totalMb: total_mb ?? prev.totalMb,
-          speedMbps: speed_mbps ?? prev.speedMbps,
+          downloadedMb: event.downloadedMb ?? prev.downloadedMb,
+          totalMb: event.totalMb ?? prev.totalMb,
+          speedMbps: event.speedMbps ?? prev.speedMbps,
         }));
 
         if (status === 'completed') {
           setParakeetDownloaded(true);
         }
-      }
-    );
+    });
 
-    const unlistenComplete = listen<{ modelName: string }>(
-      'parakeet-model-download-complete',
-      (event) => {
-        if (event.payload.modelName === PARAKEET_MODEL) {
+    const unlistenComplete = transcriptionClient.onModelDownloadComplete(event => {
+        if (event.provider === 'parakeet' && event.modelName === PARAKEET_MODEL) {
           setParakeetState((prev) => ({ ...prev, status: 'completed', progress: 100 }));
           setParakeetDownloaded(true);
         }
-      }
-    );
+    });
 
-    const unlistenError = listen<{ modelName: string; error: string }>(
-      'parakeet-model-download-error',
-      (event) => {
-        if (event.payload.modelName === PARAKEET_MODEL) {
+    const unlistenError = transcriptionClient.onModelDownloadError(event => {
+        if (event.provider === 'parakeet' && event.modelName === PARAKEET_MODEL) {
           setParakeetState((prev) => ({
             ...prev,
             status: 'error',
-            error: event.payload.error,
+            error: event.error,
           }));
         }
-      }
-    );
+    });
 
     return () => {
-      unlistenProgress.then((fn) => fn());
-      unlistenComplete.then((fn) => fn());
-      unlistenError.then((fn) => fn());
+      unlistenProgress();
+      unlistenComplete();
+      unlistenError();
     };
-  }, []);
+  }, [transcriptionClient]);
 
   // Listen to Summary Model download progress (always downloading for builtin-ai)
   useEffect(() => {
@@ -340,8 +333,8 @@ export function DownloadProgressStep() {
   const handleContinue = async () => {
     // Verify actual model availability (catches state drift)
     try {
-      await invoke('parakeet_init');
-      const actuallyAvailable = await invoke<boolean>('parakeet_has_available_models');
+      await transcriptionClient.initializeProvider('parakeet');
+      const actuallyAvailable = await transcriptionClient.hasAvailableModels('parakeet');
 
       if (actuallyAvailable && !parakeetDownloaded) {
         console.log('[DownloadProgressStep] Model available but state not updated');
@@ -491,7 +484,7 @@ export function DownloadProgressStep() {
   return (
     <OnboardingContainer
       title="Getting things ready"
-      description="You can start using Meetily after downloading the Transcription Engine."
+      description="You can start using Voxa after downloading the Transcription Engine."
       step={3}
       totalSteps={isMac ? 4 : 3}
     >

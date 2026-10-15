@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { X, Download, Check, Loader2, ArrowBigDownDash } from 'lucide-react';
 import { getDownloadTotalMb } from '@/lib/onboarding-summary-model';
-import type { ParakeetDownloadProgressEvent } from '@/lib/parakeet';
+import { useVoxaClient } from '@/clients';
 
 interface DownloadProgress {
   modelName: string;
@@ -125,6 +125,7 @@ function DownloadToastContent({
 
 // Hook to manage download progress toasts
 export function useDownloadProgressToast() {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
   const [dismissedModels, setDismissedModels] = useState<Set<string>>(new Set());
 
@@ -222,17 +223,16 @@ export function useDownloadProgressToast() {
 
   // Listen to Parakeet download events
   useEffect(() => {
-    const unlistenProgress = listen<ParakeetDownloadProgressEvent>(
-      'parakeet-model-download-progress',
-      (event) => {
-        const { modelName, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
+    const unlistenProgress = transcriptionClient.onModelDownloadProgress(event => {
+        if (event.provider !== 'parakeet') return;
+        const { modelName, progress, status } = event;
         const downloadData: DownloadProgress = {
           modelName,
           displayName: 'Transcription Model (Parakeet)',
           progress,
-          downloadedMb: downloaded_mb ?? 0,
-          totalMb: total_mb ?? 670,
-          speedMbps: speed_mbps ?? 0,
+          downloadedMb: event.downloadedMb ?? (event.downloadedBytes ? event.downloadedBytes / 1024 / 1024 : 0),
+          totalMb: event.totalMb ?? (event.totalBytes ? event.totalBytes / 1024 / 1024 : 670),
+          speedMbps: event.speedMbps ?? 0,
           status: status === 'cancelled'
             ? 'cancelled'
             : status === 'completed'
@@ -244,13 +244,11 @@ export function useDownloadProgressToast() {
         if (downloadData.status === 'cancelled') {
           cleanupDownload(modelName, 6000);
         }
-      }
-    );
+    });
 
-    const unlistenComplete = listen<{ modelName: string }>(
-      'parakeet-model-download-complete',
-      (event) => {
-        const { modelName } = event.payload;
+    const unlistenComplete = transcriptionClient.onModelDownloadComplete(event => {
+        if (event.provider !== 'parakeet') return;
+        const { modelName } = event;
         const downloadData: DownloadProgress = {
           modelName,
           displayName: 'Transcription Model (Parakeet)',
@@ -263,13 +261,11 @@ export function useDownloadProgressToast() {
         updateDownload(modelName, downloadData);
         // Clean up after 4 seconds (completion toast duration is 3s + 1s buffer)
         cleanupDownload(modelName, 4000);
-      }
-    );
+    });
 
-    const unlistenError = listen<{ modelName: string; error: string }>(
-      'parakeet-model-download-error',
-      (event) => {
-        const { modelName, error } = event.payload;
+    const unlistenError = transcriptionClient.onModelDownloadError(event => {
+        if (event.provider !== 'parakeet') return;
+        const { modelName, error } = event;
         const downloadData: DownloadProgress = {
           modelName,
           displayName: 'Transcription Model (Parakeet)',
@@ -283,15 +279,14 @@ export function useDownloadProgressToast() {
         updateDownload(modelName, downloadData);
         // Clean up after 11 seconds (error toast duration is 10s + 1s buffer)
         cleanupDownload(modelName, 11000);
-      }
-    );
+    });
 
     return () => {
-      unlistenProgress.then((fn) => fn());
-      unlistenComplete.then((fn) => fn());
-      unlistenError.then((fn) => fn());
+      unlistenProgress();
+      unlistenComplete();
+      unlistenError();
     };
-  }, [updateDownload, cleanupDownload]);
+  }, [updateDownload, cleanupDownload, transcriptionClient]);
 
   // Listen to Built-in AI summary model download events
   useEffect(() => {

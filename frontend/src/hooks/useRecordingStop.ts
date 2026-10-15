@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
 import { storageService } from '@/services/storageService';
-import { transcriptService } from '@/services/transcriptService';
 import Analytics from '@/lib/analytics';
+import { useVoxaClient } from '@/clients';
 import {
   applyPinnedSummaryLanguageToMeeting,
   detectAndCacheSummaryLanguage,
@@ -41,6 +40,7 @@ export function useRecordingStop(
   setIsRecording: (value: boolean) => void,
   setIsRecordingDisabled: (value: boolean) => void
 ): UseRecordingStopReturn {
+  const { recording: recordingClient, transcription: transcriptionClient } = useVoxaClient();
   // USE global state instead
   const recordingState = useRecordingState();
   const {
@@ -77,45 +77,28 @@ export function useRecordingStop(
 
   // Set up recording-stopped listener for meeting navigation
   useEffect(() => {
-    let unlistenFn: (() => void) | undefined;
-
-    const setupRecordingStoppedListener = async () => {
-      try {
-        console.log('Setting up recording-stopped listener for navigation...');
-        unlistenFn = await listen<{
-          message: string;
-          folder_path?: string;
-          meeting_name?: string;
-        }>('recording-stopped', async (event) => {
+    console.log('Setting up recording-stopped listener for navigation...');
+    const unlistenFn = recordingClient.onStopped(payload => {
           // Create promise that resolves when sessionStorage is set (prevents race condition)
           recordingStoppedDataRef.current = (async () => {
-            const { folder_path, meeting_name } = event.payload;
+            const { folderPath, meetingName } = payload;
 
             // Store folder_path and meeting_name for later use in handleRecordingStop
-            if (folder_path) {
-              sessionStorage.setItem('last_recording_folder_path', folder_path);
+            if (folderPath) {
+              sessionStorage.setItem('last_recording_folder_path', folderPath);
             }
-            if (meeting_name) {
-              sessionStorage.setItem('last_recording_meeting_name', meeting_name);
+            if (meetingName) {
+              sessionStorage.setItem('last_recording_meeting_name', meetingName);
             }
           })();
-
-        });
-        console.log('Recording stopped listener setup complete');
-      } catch (error) {
-        console.error('Failed to setup recording stopped listener:', error);
-      }
-    };
-
-    setupRecordingStoppedListener();
+    });
+    console.log('Recording stopped listener setup complete');
 
     return () => {
       console.log('Cleaning up recording stopped listener...');
-      if (unlistenFn) {
-        unlistenFn();
-      }
+      unlistenFn();
     };
-  }, [router]);
+  }, [router, recordingClient]);
 
   // Main recording stop handler
   const handleRecordingStop = useCallback(async (isCallApi: boolean) => {
@@ -155,7 +138,7 @@ export function useRecordingStop(
       let transcriptionComplete = false;
 
       // Listen for transcription-complete event
-      const unlistenComplete = await listen('transcription-complete', () => {
+      const unlistenComplete = transcriptionClient.onComplete(() => {
         console.log('Received transcription-complete event');
         transcriptionComplete = true;
       });
@@ -163,27 +146,27 @@ export function useRecordingStop(
       // Poll for transcription status
       while (elapsedTime < MAX_WAIT_TIME && !transcriptionComplete) {
         try {
-          const status = await transcriptService.getTranscriptionStatus();
+          const status = await transcriptionClient.getStatus();
           console.log('Transcription status:', status);
 
           // Check if transcription is complete
-          if (!status.is_processing && status.chunks_in_queue === 0) {
+          if (!status.isProcessing && status.chunksInQueue === 0) {
             console.log('Transcription complete - no active processing and no chunks in queue');
             transcriptionComplete = true;
             break;
           }
 
           // If no activity for more than 8 seconds and no chunks in queue, consider it done (increased from 5s to 8s)
-          if (status.last_activity_ms > 8000 && status.chunks_in_queue === 0) {
+          if (status.lastActivityMs > 8000 && status.chunksInQueue === 0) {
             console.log('Transcription likely complete - no recent activity and empty queue');
             transcriptionComplete = true;
             break;
           }
 
           // Update user with current status
-          if (status.chunks_in_queue > 0) {
-            console.log(`Processing ${status.chunks_in_queue} remaining audio chunks...`);
-            setStatus(RecordingStatus.PROCESSING_TRANSCRIPTS, `Processing ${status.chunks_in_queue} remaining chunks...`);
+          if (status.chunksInQueue > 0) {
+            console.log(`Processing ${status.chunksInQueue} remaining audio chunks...`);
+            setStatus(RecordingStatus.PROCESSING_TRANSCRIPTS, `Processing ${status.chunksInQueue} remaining chunks...`);
           }
 
           // Wait before next check
@@ -435,6 +418,7 @@ export function useRecordingStop(
     meetings,
     setIsMeetingActive,
     router,
+    transcriptionClient,
   ]);
 
   // Expose handleRecordingStop function to window for Rust callbacks

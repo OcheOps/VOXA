@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PermissionStatus, OnboardingPermissions } from '@/types/onboarding';
 import { resolveOnboardingSummaryModelStatus } from '@/lib/onboarding-summary-model';
-import type { ParakeetDownloadProgressEvent } from '@/lib/parakeet';
+import { useVoxaClient } from '@/clients';
 
 const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
@@ -75,6 +75,7 @@ interface StartBackgroundDownloadsOptions {
 const OnboardingContext = createContext<OnboardingContextType | undefined>(undefined);
 
 export function OnboardingProvider({ children }: { children: React.ReactNode }) {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [currentStep, setCurrentStep] = useState(1);
   const [completed, setCompleted] = useState(false);
   const [parakeetDownloaded, setParakeetDownloaded] = useState(false);
@@ -235,10 +236,9 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   // Listen to Parakeet download progress
   useEffect(() => {
-    const unlisten = listen<ParakeetDownloadProgressEvent>(
-      'parakeet-model-download-progress',
-      (event) => {
-        const { modelName, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
+    const unlisten = transcriptionClient.onModelDownloadProgress(event => {
+        if (event.provider !== 'parakeet') return;
+        const { modelName, progress, status } = event;
         if (modelName !== PARAKEET_MODEL) return;
 
         if (status === 'cancelled') {
@@ -257,43 +257,34 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         setParakeetProgress(progress);
         setParakeetProgressInfo({
           percent: progress,
-          downloadedMb: downloaded_mb ?? 0,
-          totalMb: total_mb ?? 0,
-          speedMbps: speed_mbps ?? 0,
+          downloadedMb: event.downloadedMb ?? 0,
+          totalMb: event.totalMb ?? 0,
+          speedMbps: event.speedMbps ?? 0,
         });
         if (status === 'completed') {
           setParakeetDownloaded(true);
         }
-      }
-    );
+    });
 
-    const unlistenComplete = listen<{ modelName: string }>(
-      'parakeet-model-download-complete',
-      (event) => {
-        const { modelName } = event.payload;
-        if (modelName === PARAKEET_MODEL) {
+    const unlistenComplete = transcriptionClient.onModelDownloadComplete(event => {
+        if (event.provider === 'parakeet' && event.modelName === PARAKEET_MODEL) {
           setParakeetDownloaded(true);
           setParakeetProgress(100);
         }
-      }
-    );
+    });
 
-    const unlistenError = listen<{ modelName: string; error: string }>(
-      'parakeet-model-download-error',
-      (event) => {
-        const { modelName } = event.payload;
-        if (modelName === PARAKEET_MODEL) {
-          console.error('Parakeet download error:', event.payload.error);
+    const unlistenError = transcriptionClient.onModelDownloadError(event => {
+        if (event.provider === 'parakeet' && event.modelName === PARAKEET_MODEL) {
+          console.error('Parakeet download error:', event.error);
         }
-      }
-    );
+    });
 
     return () => {
-      unlisten.then(fn => fn());
-      unlistenComplete.then(fn => fn());
-      unlistenError.then(fn => fn());
+      unlisten();
+      unlistenComplete();
+      unlistenError();
     };
-  }, []);
+  }, [transcriptionClient]);
 
   // Listen to summary model (Built-in AI) download progress
   useEffect(() => {
@@ -388,8 +379,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
     // Verify Parakeet model exists on disk
     try {
-      await invoke('parakeet_init');
-      parakeetDownloaded = await invoke<boolean>('parakeet_has_available_models');
+      await transcriptionClient.initializeProvider('parakeet');
+      parakeetDownloaded = await transcriptionClient.hasAvailableModels('parakeet');
       console.log('[OnboardingContext] Parakeet verified on disk:', parakeetDownloaded);
     } catch (error) {
       console.warn('[OnboardingContext] Failed to verify Parakeet:', error);

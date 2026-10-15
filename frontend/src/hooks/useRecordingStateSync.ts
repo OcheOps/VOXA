@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { recordingService } from '@/services/recordingService';
+import { useVoxaClient } from '@/clients';
 
 interface UseRecordingStateSyncReturn {
   isBackendRecording: boolean;
@@ -20,6 +20,7 @@ export function useRecordingStateSync(
   setIsRecording: (value: boolean) => void,
   setIsMeetingActive: (value: boolean) => void
 ): UseRecordingStateSyncReturn {
+  const { recording: recordingClient } = useVoxaClient();
   const [isRecordingDisabled, setIsRecordingDisabled] = useState(false);
 
   useEffect(() => {
@@ -29,7 +30,7 @@ export function useRecordingStateSync(
       try {
         console.log('checkRecordingState called');
         console.log('About to call is_recording command');
-        const isCurrentlyRecording = await recordingService.isRecording();
+        const isCurrentlyRecording = await recordingClient.isRecording();
         console.log('checkRecordingState: backend recording =', isCurrentlyRecording, 'UI recording =', isRecording);
 
         if (isCurrentlyRecording && !isRecording) {
@@ -45,23 +46,16 @@ export function useRecordingStateSync(
       }
     };
 
-    // Test if Tauri is available
-    console.log('Testing Tauri availability...');
-    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-      console.log('Tauri is available, starting state check');
-      checkRecordingState();
+    checkRecordingState();
 
-      // Set up a polling interval to periodically check recording state
-      const interval = setInterval(checkRecordingState, 1000); // Check every 1 second
+    // The selected transport decides how recording state is retrieved.
+    const interval = setInterval(checkRecordingState, 1000);
 
-      return () => {
-        console.log('Cleaning up recording state check interval');
-        clearInterval(interval);
-      };
-    } else {
-      console.log('Tauri is not available, skipping state check');
-    }
-  }, [isRecording, setIsRecording, setIsMeetingActive]);
+    return () => {
+      console.log('Cleaning up recording state check interval');
+      clearInterval(interval);
+    };
+  }, [isRecording, setIsRecording, setIsMeetingActive, recordingClient]);
 
   return {
     isBackendRecording: isRecording,

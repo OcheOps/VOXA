@@ -1,21 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
-import { recordingService } from '@/services/recordingService';
+import { useVoxaClient } from '@/clients';
 import Analytics from '@/lib/analytics';
 import { showRecordingNotification } from '@/lib/recordingNotification';
-import {
-  getProviderCommands,
-  hasDownloadingModel,
-  type ModelWithStatus,
-} from '@/lib/transcription-model-readiness';
 import { toast } from 'sonner';
 
 const TRANSCRIPTION_RUNTIME_START_ERROR_CODE = 'TRANSCRIPTION_RUNTIME_INITIALIZATION_FAILED';
-const TRANSCRIPTION_RUNTIME_USER_MESSAGE = 'Speech recognition could not initialize. Restart Meetily. If the problem continues, repair or reinstall the app.';
+const TRANSCRIPTION_RUNTIME_USER_MESSAGE = 'Speech recognition could not initialize. Restart Voxa. If the problem continues, repair or reinstall the app.';
 
 const isTranscriptionRuntimeStartError = (error: unknown) =>
   String(error) === TRANSCRIPTION_RUNTIME_START_ERROR_CODE;
@@ -23,10 +17,6 @@ const isTranscriptionRuntimeStartError = (error: unknown) =>
 interface UseRecordingStartReturn {
   handleRecordingStart: () => Promise<void>;
   isAutoStarting: boolean;
-}
-
-interface TranscriptConfig {
-  provider?: string;
 }
 
 /**
@@ -45,6 +35,7 @@ export function useRecordingStart(
   setIsRecording: (value: boolean) => void,
   showModal?: (name: 'modelSelector', message?: string) => void
 ): UseRecordingStartReturn {
+  const { recording: recordingClient, transcription: transcriptionClient } = useVoxaClient();
   const [isAutoStarting, setIsAutoStarting] = useState(false);
 
   // Synchronous latch: a rapid double-click re-enters handleRecordingStart
@@ -68,49 +59,29 @@ export function useRecordingStart(
     return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
   }, []);
 
-  const getTranscriptionProvider = useCallback(async (): Promise<string> => {
-    try {
-      const config = await invoke<TranscriptConfig | null>('api_get_transcript_config');
-      return config?.provider || 'parakeet';
-    } catch (error) {
-      console.error('Failed to load transcription provider:', error);
-      return 'parakeet';
-    }
-  }, []);
-
   // Check the selected local transcription provider, not a hardcoded engine.
   const checkTranscriptionModelReady = useCallback(async (): Promise<boolean> => {
     try {
-      const provider = await getTranscriptionProvider();
-      const commands = getProviderCommands(provider);
-
-      if (commands) {
-        await invoke(commands.initialize);
-        return await invoke<boolean>(commands.hasAvailableModels);
-      }
-
-      console.error(`Unsupported transcription provider: ${provider}`);
-      return false;
+      return await transcriptionClient.ensureReady();
     } catch (error) {
       console.error('Failed to check transcription model status:', error);
       return false;
     }
-  }, [getTranscriptionProvider]);
+  }, [transcriptionClient]);
 
   // Check download status for the selected local transcription provider.
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
     try {
-      const provider = await getTranscriptionProvider();
-      const commands = getProviderCommands(provider);
-      if (!commands) return false;
-
-      const models = await invoke<ModelWithStatus[]>(commands.getAvailableModels);
-      return hasDownloadingModel(models);
+      const provider = await transcriptionClient.getSelectedProvider();
+      const models = await transcriptionClient.listModels(provider);
+      return models.some(model => (
+        typeof model.status === 'object' && 'downloading' in model.status
+      ));
     } catch (error) {
       console.error('Failed to check model download status:', error);
       return false; // Default to not downloading (will show error + modal)
     }
-  }, [getTranscriptionProvider]);
+  }, [transcriptionClient]);
 
   // The Rust recording command validates the same provider again before capture.
   const checkModelReady = checkTranscriptionModelReady;
@@ -157,11 +128,11 @@ export function useRecordingStart(
 
       // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);
-      await recordingService.startRecordingWithDevices(
-        selectedDevices?.micDevice || null,
-        selectedDevices?.systemDevice || null,
-        randomTitle
-      );
+      await recordingClient.start({
+        microphoneDeviceName: selectedDevices?.micDevice || null,
+        systemAudioDeviceName: selectedDevices?.systemDevice || null,
+        meetingName: randomTitle,
+      });
       console.log('Backend recording started successfully');
 
       // Update state after successful backend start
@@ -205,7 +176,7 @@ export function useRecordingStart(
     } finally {
       isStartingRef.current = false;
     }
-  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkModelReady, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
+  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkModelReady, checkIfModelDownloading, selectedDevices, showModal, setStatus, recordingClient]);
 
   // Check for autoStartRecording flag and start recording automatically
   useEffect(() => {
@@ -249,11 +220,11 @@ export function useRecordingStart(
             setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
             console.log('Auto-starting backend recording with meeting:', generatedMeetingTitle);
-            const result = await recordingService.startRecordingWithDevices(
-              selectedDevices?.micDevice || null,
-              selectedDevices?.systemDevice || null,
-              generatedMeetingTitle
-            );
+            const result = await recordingClient.start({
+              microphoneDeviceName: selectedDevices?.micDevice || null,
+              systemAudioDeviceName: selectedDevices?.systemDevice || null,
+              meetingName: generatedMeetingTitle,
+            });
             console.log('Auto-start backend recording result:', result);
 
             // Update UI state after successful backend start
@@ -303,6 +274,7 @@ export function useRecordingStart(
     checkIfModelDownloading,
     showModal,
     setStatus,
+    recordingClient,
   ]);
 
   // Listen for direct recording trigger from sidebar when already on home page
@@ -347,11 +319,11 @@ export function useRecordingStart(
         setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
         console.log('Starting backend recording with meeting:', generatedMeetingTitle);
-        const result = await recordingService.startRecordingWithDevices(
-          selectedDevices?.micDevice || null,
-          selectedDevices?.systemDevice || null,
-          generatedMeetingTitle
-        );
+        const result = await recordingClient.start({
+          microphoneDeviceName: selectedDevices?.micDevice || null,
+          systemAudioDeviceName: selectedDevices?.systemDevice || null,
+          meetingName: generatedMeetingTitle,
+        });
         console.log('Backend recording result:', result);
 
         // Update UI state after successful backend start
@@ -403,6 +375,7 @@ export function useRecordingStart(
     checkIfModelDownloading,
     showModal,
     setStatus,
+    recordingClient,
   ]);
 
   return {

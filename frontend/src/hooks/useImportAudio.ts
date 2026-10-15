@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import Analytics from '@/lib/analytics';
 import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-preferences';
 import { toast } from 'sonner';
+import { useVoxaClient } from '@/clients';
 
 export interface AudioFileInfo {
   path: string;
@@ -61,6 +61,7 @@ export function useImportAudio({
   onComplete,
   onError,
 }: UseImportAudioOptions = {}): UseImportAudioReturn {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [status, setStatus] = useState<ImportStatus>('idle');
   const [fileInfo, setFileInfo] = useState<AudioFileInfo | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
@@ -77,85 +78,59 @@ export function useImportAudio({
 
   // Set up event listeners (registered once, use refs for callbacks)
   useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    const cleanedUpRef = { current: false };
-
-    const setupListeners = async () => {
-      // Progress events
-      const unlistenProgress = await listen<ImportProgress>(
-        'import-progress',
-        (event) => {
+    const unlisteners = [
+      transcriptionClient.onImportProgress(event => {
           if (isCancelledRef.current) return;
-          setProgress(event.payload);
+          setProgress({
+            stage: event.stage,
+            progress_percentage: event.progressPercentage,
+            message: event.message,
+          });
           setStatus('processing');
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenProgress();
-        return;
-      }
-      unlisteners.push(unlistenProgress);
-
-      // Completion event
-      const unlistenComplete = await listen<ImportResult>(
-        'import-complete',
-        async (event) => {
+      }),
+      transcriptionClient.onImportComplete(async event => {
           if (isCancelledRef.current) return;
+
+          const result: ImportResult = {
+            meeting_id: event.meetingId,
+            title: event.title,
+            segments_count: event.segmentsCount,
+            duration_seconds: event.durationSeconds,
+          };
 
           await Analytics.track('import_audio_completed', {
             success: 'true',
-            duration_seconds: event.payload.duration_seconds.toString(),
-            segments_count: event.payload.segments_count.toString()
+            duration_seconds: result.duration_seconds.toString(),
+            segments_count: result.segments_count.toString()
           });
 
           setStatus('complete');
           setProgress(null);
           try {
-            await applyPinnedSummaryLanguageToMeeting(event.payload.meeting_id);
+            await applyPinnedSummaryLanguageToMeeting(result.meeting_id);
           } catch (error) {
             console.warn('Failed to apply pinned summary language to imported meeting:', error);
             toast.warning('Could not apply default summary language', {
               description: 'The imported meeting was saved, but the default summary language was not applied.',
             });
           }
-          onCompleteRef.current?.(event.payload);
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenComplete();
-        unlisteners.forEach(u => u());
-        return;
-      }
-      unlisteners.push(unlistenComplete);
-
-      // Error event
-      const unlistenError = await listen<ImportError>(
-        'import-error',
-        async (event) => {
+          onCompleteRef.current?.(result);
+      }),
+      transcriptionClient.onImportError(async event => {
           if (isCancelledRef.current) return;
 
-          await Analytics.trackError('import_audio_failed', event.payload.error);
+          await Analytics.trackError('import_audio_failed', event.error);
 
           setStatus('error');
-          setError(event.payload.error);
-          onErrorRef.current?.(event.payload.error);
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenError();
-        unlisteners.forEach(u => u());
-        return;
-      }
-      unlisteners.push(unlistenError);
-    };
-
-    setupListeners();
+          setError(event.error);
+          onErrorRef.current?.(event.error);
+      }),
+    ];
 
     return () => {
-      cleanedUpRef.current = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, []);
+  }, [transcriptionClient]);
 
   // Select file using native file dialog
   const selectFile = useCallback(async (): Promise<AudioFileInfo | null> => {
@@ -226,7 +201,7 @@ export function useImportAudio({
           });
         }
 
-        await invoke('start_import_audio_command', {
+        await transcriptionClient.startImport({
           sourcePath,
           title,
           language: language || null,
@@ -243,20 +218,20 @@ export function useImportAudio({
         onErrorRef.current?.(errorMsg);
       }
     },
-    [fileInfo]
+    [fileInfo, transcriptionClient]
   );
 
   // Cancel ongoing import
   const cancelImport = useCallback(async () => {
     isCancelledRef.current = true;
     try {
-      await invoke('cancel_import_command');
+      await transcriptionClient.cancelImport();
       setStatus('idle');
       setProgress(null);
     } catch (err: any) {
       console.error('Failed to cancel import:', err);
     }
-  }, []);
+  }, [transcriptionClient]);
 
   // Reset all state
   const reset = useCallback(() => {

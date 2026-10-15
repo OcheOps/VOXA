@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useVoxaClient } from '@/clients';
 
 export interface PermissionStatus {
   hasMicrophone: boolean;
@@ -9,6 +9,7 @@ export interface PermissionStatus {
 }
 
 export function usePermissionCheck() {
+  const { recording: recordingClient } = useVoxaClient();
   const [status, setStatus] = useState<PermissionStatus>({
     hasMicrophone: false,
     hasSystemAudio: false,
@@ -21,15 +22,15 @@ export function usePermissionCheck() {
 
     try {
       // Get audio devices to check for microphone and system audio availability
-      const devices = await invoke<Array<{ name: string; device_type: 'Input' | 'Output' }>>('get_audio_devices');
+      const devices = await recordingClient.listDevices();
 
       // Check for microphone devices (Input)
-      const inputDevices = devices.filter(d => d.device_type === 'Input');
+      const inputDevices = devices.filter(d => d.type === 'input');
       const hasMicrophone = inputDevices.length > 0;
 
       // Check for system audio devices (Output)
       // On macOS, we need ScreenCaptureKit devices for system audio
-      const outputDevices = devices.filter(d => d.device_type === 'Output');
+      const outputDevices = devices.filter(d => d.type === 'output');
       const hasSystemAudio = outputDevices.length > 0;
 
       console.log('Permission check:', {
@@ -62,7 +63,7 @@ export function usePermissionCheck() {
   const requestPermissions = async () => {
     try {
       // Trigger audio permission by trying to access devices
-      await invoke('get_audio_devices');
+      await recordingClient.listDevices();
 
       // Recheck after triggering
       setTimeout(() => {

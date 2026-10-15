@@ -1,8 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { recordingService } from '@/services/recordingService';
 import { toast } from 'sonner';
+import { useVoxaClient } from '@/clients';
 
 /**
  * Recording state synchronized with backend
@@ -59,6 +59,7 @@ export const useRecordingState = () => {
 };
 
 export function RecordingStateProvider({ children }: { children: React.ReactNode }) {
+  const { recording: recordingClient } = useVoxaClient();
   const [state, setState] = useState<RecordingState>({
     isRecording: false,
     isPaused: false,
@@ -88,15 +89,15 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
    */
   const syncWithBackend = async () => {
     try {
-      const backendState = await recordingService.getRecordingState();
+      const backendState = await recordingClient.getState();
 
       setState(prev => ({
         ...prev,
-        isRecording: backendState.is_recording,
-        isPaused: backendState.is_paused,
-        isActive: backendState.is_active,
-        recordingDuration: backendState.recording_duration,
-        activeDuration: backendState.active_duration,
+        isRecording: backendState.isRecording,
+        isPaused: backendState.isPaused,
+        isActive: backendState.isActive,
+        recordingDuration: backendState.recordingDuration,
+        activeDuration: backendState.activeDuration,
       }));
 
       console.log('[RecordingStateContext] Synced with backend:', backendState);
@@ -134,12 +135,9 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
    */
   useEffect(() => {
     console.log('[RecordingStateContext] Setting up event listeners');
-    const unsubscribers: (() => void)[] = [];
-
-    const setupListeners = async () => {
-      try {
+    const unsubscribers = [
         // Recording started
-        const unlistenStarted = await recordingService.onRecordingStarted(() => {
+        recordingClient.onStarted(() => {
           console.log('[RecordingStateContext] Recording started event');
           setState(prev => ({
             ...prev,
@@ -149,20 +147,18 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             status: RecordingStatus.RECORDING,  // NEW: Set status to RECORDING
           }));
           startPolling();
-        });
-        unsubscribers.push(unlistenStarted);
+        }),
 
         // Recording starting (startup in progress)
-        const unlistenStarting = await recordingService.onRecordingStarting(() => {
+        recordingClient.onStarting(() => {
           console.log('[RecordingStateContext] Recording starting event');
           setState(prev => prev.status === RecordingStatus.RECORDING
             ? prev
             : { ...prev, status: RecordingStatus.STARTING, statusMessage: 'Starting recording...' });
-        });
-        unsubscribers.push(unlistenStarting);
+        }),
 
         // Recording stopped
-        const unlistenStopped = await recordingService.onRecordingStopped((payload) => {
+        recordingClient.onStopped((payload) => {
           console.log('[RecordingStateContext] Recording stopped event:', payload);
           setState(prev => {
             // Set status to STOPPING if not already in stop flow
@@ -187,45 +183,36 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             };
           });
           stopPolling();
-        });
-        unsubscribers.push(unlistenStopped);
+        }),
 
         // Recording paused
-        const unlistenPaused = await recordingService.onRecordingPaused(() => {
+        recordingClient.onPaused(() => {
           console.log('[RecordingStateContext] Recording paused event');
           setState(prev => ({
             ...prev,
             isPaused: true,
             isActive: false,
           }));
-        });
-        unsubscribers.push(unlistenPaused);
+        }),
 
         // Recording resumed
-        const unlistenResumed = await recordingService.onRecordingResumed(() => {
+        recordingClient.onResumed(() => {
           console.log('[RecordingStateContext] Recording resumed event');
           setState(prev => ({
             ...prev,
             isPaused: false,
             isActive: true,
           }));
-        });
-        unsubscribers.push(unlistenResumed);
-
-        console.log('[RecordingStateContext] Event listeners set up successfully');
-      } catch (error) {
-        console.error('[RecordingStateContext] Failed to set up event listeners:', error);
-      }
-    };
-
-    setupListeners();
+        }),
+    ];
+    console.log('[RecordingStateContext] Event listeners set up successfully');
 
     return () => {
       console.log('[RecordingStateContext] Cleaning up event listeners');
       unsubscribers.forEach(unsub => unsub());
       stopPolling();
     };
-  }, []);
+  }, [recordingClient]);
 
   /**
    * Global mic hot-swap UI feedback.
@@ -249,45 +236,32 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   }, [state.isRecording]);
 
   useEffect(() => {
-    // `cancelled` guard prevents leaking a listener when StrictMode/HMR runs
-    // cleanup before the async listen(...) registration resolves.
-    let cancelled = false;
-    let unlistenSwitched: (() => void) | undefined;
-    let unlistenFailed: (() => void) | undefined;
-    let unlistenMicUnavailable: (() => void) | undefined;
-    let unlistenExhausted: (() => void) | undefined;
-
-    const setup = async () => {
-      try {
-        const fnSwitched = await recordingService.onMicDeviceSwitched(({ device_name }) => {
-          console.log('[RecordingStateContext] mic-device-switched →', device_name);
+    const unsubscribers = [
+        recordingClient.onMicrophoneSwitched(({ deviceName }) => {
+          console.log('[RecordingStateContext] mic-device-switched →', deviceName);
           // Fires for both cases: a mic that disconnects mid-recording, and a
           // selected mic that wasn't available at start (backend fell back to
           // the default). Copy is worded to be accurate for both.
           toast.info(
-            `Microphone switched to ${device_name} for this meeting.`,
+            `Microphone switched to ${deviceName} for this meeting.`,
             { duration: 6000 }
           );
-        });
-        if (cancelled) { fnSwitched(); return; }
-        unlistenSwitched = fnSwitched;
+        }),
 
-        const fnFailed = await recordingService.onMicSwapFailed(({ error, device_name }) => {
-          console.error('[RecordingStateContext] mic-swap-failed →', device_name, error);
+        recordingClient.onMicrophoneSwapFailed(({ error, deviceName }) => {
+          console.error('[RecordingStateContext] mic-swap-failed →', deviceName, error);
           // Only alarm the user if recording is still active. A Stop clicked
           // during a hot-swap race fails with "Recording manager not
           // available" — expected, not an error worth a toast.
           if (isRecordingRef.current) {
             toast.error(
-              `Microphone fallback failed for ${device_name}: ${error}`,
+              `Microphone fallback failed for ${deviceName}: ${error}`,
               { duration: 8000 }
             );
           }
-        });
-        if (cancelled) { fnFailed(); return; }
-        unlistenFailed = fnFailed;
+        }),
 
-        const fnUnavailable = await recordingService.onMicUnavailable(() => {
+        recordingClient.onMicrophoneUnavailable(() => {
           console.log('[RecordingStateContext] mic-unavailable');
           // Fires at recording start, before isRecording flips true, so this
           // is intentionally NOT gated by isRecordingRef.
@@ -295,38 +269,25 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             'No microphone available — recording system audio only.',
             { duration: 8000 }
           );
-        });
-        if (cancelled) { fnUnavailable(); return; }
-        unlistenMicUnavailable = fnUnavailable;
+        }),
 
-        const fnExhausted = await recordingService.onMicRecoveryExhausted(({ device_name }) => {
-          console.error('[RecordingStateContext] mic-recovery-exhausted →', device_name);
+        recordingClient.onMicrophoneRecoveryExhausted(({ deviceName }) => {
+          console.error('[RecordingStateContext] mic-recovery-exhausted →', deviceName);
           // Fires mid-recording only — gate on the recording ref like
           // mic-swap-failed so a stale event after Stop doesn't alarm the user.
           if (isRecordingRef.current) {
             toast.error(
-              `Microphone '${device_name}' could not be recovered — recording continues without a microphone. Stop and restart to fix.`,
+              `Microphone '${deviceName}' could not be recovered — recording continues without a microphone. Stop and restart to fix.`,
               { duration: 10000 }
             );
           }
-        });
-        if (cancelled) { fnExhausted(); return; }
-        unlistenExhausted = fnExhausted;
-      } catch (e) {
-        console.error('[RecordingStateContext] Failed to set up hot-swap listeners:', e);
-      }
-    };
-
-    setup();
+        }),
+    ];
 
     return () => {
-      cancelled = true;
-      unlistenSwitched?.();
-      unlistenFailed?.();
-      unlistenMicUnavailable?.();
-      unlistenExhausted?.();
+      unsubscribers.forEach(unsubscribe => unsubscribe());
     };
-  }, []);
+  }, [recordingClient]);
 
   /**
    * Initial sync on mount - CRITICAL for fixing refresh desync bug
@@ -335,7 +296,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     console.log('[RecordingStateContext] Initial mount - syncing with backend');
     syncWithBackend();
-  }, []);
+  }, [recordingClient]);
 
   // NEW: Computed helpers from status
   const contextValue = useMemo(() => ({

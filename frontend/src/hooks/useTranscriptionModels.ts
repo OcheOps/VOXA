@@ -1,11 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-
-export interface RawModelInfo {
-  name: string;
-  size_mb: number;
-  status: 'Available' | 'Missing' | { Downloading: { progress: number } } | { Error: string };
-}
+import { useVoxaClient } from '@/clients';
 
 export interface ModelOption {
   provider: 'whisper' | 'parakeet';
@@ -29,6 +23,7 @@ interface TranscriptModelConfig {
  * @returns Object containing available models, selected model key, loading state, and fetch function
  */
 export function useTranscriptionModels(transcriptModelConfig: TranscriptModelConfig | undefined) {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [loadingModels, setLoadingModels] = useState(false);
@@ -47,14 +42,14 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
 
     // Fetch Whisper models
     try {
-      const whisperModels = await invoke<RawModelInfo[]>('whisper_get_available_models');
+      const whisperModels = await transcriptionClient.listModels('localWhisper');
       const availableWhisper = whisperModels
-        .filter((m) => m.status === 'Available')
+        .filter((m) => m.status === 'available')
         .map((m) => ({
           provider: 'whisper' as const,
           name: m.name,
           displayName: `🏠 Whisper: ${m.name}`,
-          size_mb: m.size_mb,
+          size_mb: m.sizeMb,
         }));
       allModels.push(...availableWhisper);
     } catch (err) {
@@ -63,14 +58,14 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
 
     // Fetch Parakeet models
     try {
-      const parakeetModels = await invoke<RawModelInfo[]>('parakeet_get_available_models');
+      const parakeetModels = await transcriptionClient.listModels('parakeet');
       const availableParakeet = parakeetModels
-        .filter((m) => m.status === 'Available')
+        .filter((m) => m.status === 'available')
         .map((m) => ({
           provider: 'parakeet' as const,
           name: m.name,
           displayName: `⚡ Parakeet: ${m.name}`,
-          size_mb: m.size_mb,
+          size_mb: m.sizeMb,
         }));
       allModels.push(...availableParakeet);
     } catch (err) {
@@ -103,7 +98,7 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
     }
 
     setLoadingModels(false);
-  }, [transcriptModelConfig]);
+  }, [transcriptModelConfig, transcriptionClient]);
 
   // Reset user selection tracking (call when dialog opens fresh)
   const resetSelection = useCallback(() => {

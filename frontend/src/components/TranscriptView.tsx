@@ -6,6 +6,7 @@ import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { RecordingStatusBar } from './RecordingStatusBar';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useVoxaClient } from '@/clients';
 
 interface TranscriptViewProps {
   transcripts: Transcript[];
@@ -14,10 +15,6 @@ interface TranscriptViewProps {
   isProcessing?: boolean; // Is processing/finalizing transcription (hides "Listening..." indicator)
   isStopping?: boolean; // Is recording being stopped (provides immediate UI feedback)
   enableStreaming?: boolean; // Enable streaming effect for live transcription UX
-}
-
-interface SpeechDetectedEvent {
-  message: string;
 }
 
 // Helper function to format seconds as recording-relative time [MM:SS]
@@ -105,6 +102,7 @@ function cleanStopWords(text: string): string {
 }
 
 export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isRecording = false, isPaused = false, isProcessing = false, isStopping = false, enableStreaming = false }) => {
+  const { recording: recordingClient } = useVoxaClient();
   const [speechDetected, setSpeechDetected] = useState(false);
 
   // Debug: Log the props to understand what's happening
@@ -149,16 +147,10 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
   // Listen for speech-detected event
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-
-    const setupListener = async () => {
-      const { listen } = await import('@tauri-apps/api/event');
-      unsubscribe = await listen<SpeechDetectedEvent>('speech-detected', () => {
+    if (isRecording) {
+      unsubscribe = recordingClient.onSpeechDetected(() => {
         setSpeechDetected(true);
       });
-    };
-
-    if (isRecording) {
-      setupListener();
     } else {
       // Reset when not recording
       setSpeechDetected(false);
@@ -169,7 +161,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
         unsubscribe();
       }
     };
-  }, [isRecording]);
+  }, [isRecording, recordingClient]);
 
   // Streaming effect: animate new transcripts character-by-character
   useEffect(() => {
@@ -370,7 +362,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
             </>
           ) : (
             <>
-              <p className="text-lg font-semibold">Welcome to meetily!</p>
+              <p className="text-lg font-semibold">Welcome to Voxa!</p>
               <p className="text-xs mt-1">Start recording to see live transcription</p>
             </>
           )}

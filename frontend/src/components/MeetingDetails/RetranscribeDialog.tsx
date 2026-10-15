@@ -16,13 +16,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/select';
-import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import Analytics from '@/lib/analytics';
+import { useVoxaClient } from '@/clients';
+import type { RetranscriptionProgress } from '@/clients/contracts';
 
 interface RetranscribeDialogProps {
   open: boolean;
@@ -32,25 +32,6 @@ interface RetranscribeDialogProps {
   onComplete?: () => void;
 }
 
-interface RetranscriptionProgress {
-  meeting_id: string;
-  stage: string;
-  progress_percentage: number;
-  message: string;
-}
-
-interface RetranscriptionResult {
-  meeting_id: string;
-  segments_count: number;
-  duration_seconds: number;
-  language: string | null;
-}
-
-interface RetranscriptionError {
-  meeting_id: string;
-  error: string;
-}
-
 export function RetranscribeDialog({
   open,
   onOpenChange,
@@ -58,6 +39,7 @@ export function RetranscribeDialog({
   meetingFolderPath,
   onComplete,
 }: RetranscribeDialogProps) {
+  const { transcription: transcriptionClient } = useVoxaClient();
   const { selectedLanguage, transcriptModelConfig } = useConfig();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<RetranscriptionProgress | null>(null);
@@ -122,79 +104,42 @@ export function RetranscribeDialog({
   useEffect(() => {
     if (!open) return;
 
-    const unlisteners: UnlistenFn[] = [];
-    const cleanedUpRef = { current: false };
-
-    const setupListeners = async () => {
-      // Progress events
-      const unlistenProgress = await listen<RetranscriptionProgress>(
-        'retranscription-progress',
-        (event) => {
-          if (event.payload.meeting_id === meetingId) {
-            setProgress(event.payload);
+    const unlisteners = [
+      transcriptionClient.onRetranscriptionProgress(event => {
+          if (event.meetingId === meetingId) {
+            setProgress(event);
           }
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenProgress();
-        return;
-      }
-      unlisteners.push(unlistenProgress);
-
-      // Completion event
-      const unlistenComplete = await listen<RetranscriptionResult>(
-        'retranscription-complete',
-        async (event) => {
-          if (event.payload.meeting_id === meetingId) {
+      }),
+      transcriptionClient.onRetranscriptionComplete(async event => {
+          if (event.meetingId === meetingId) {
             await Analytics.track('enhance_transcript_completed', {
               success: 'true',
-              duration_seconds: event.payload.duration_seconds.toString(),
-              segments_count: event.payload.segments_count.toString()
+              duration_seconds: event.durationSeconds.toString(),
+              segments_count: event.segmentsCount.toString()
             });
 
             setIsProcessing(false);
             toast.success(
-              `Retranscription complete! ${event.payload.segments_count} segments created.`
+              `Retranscription complete! ${event.segmentsCount} segments created.`
             );
             onCompleteRef.current?.();
             onOpenChangeRef.current(false);
           }
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenComplete();
-        unlisteners.forEach(u => u());
-        return;
-      }
-      unlisteners.push(unlistenComplete);
-
-      // Error event
-      const unlistenError = await listen<RetranscriptionError>(
-        'retranscription-error',
-        async (event) => {
-          if (event.payload.meeting_id === meetingId) {
-            await Analytics.trackError('enhance_transcript_failed', event.payload.error);
+      }),
+      transcriptionClient.onRetranscriptionError(async event => {
+          if (event.meetingId === meetingId) {
+            await Analytics.trackError('enhance_transcript_failed', event.error);
 
             setIsProcessing(false);
-            setError(event.payload.error);
+            setError(event.error);
           }
-        }
-      );
-      if (cleanedUpRef.current) {
-        unlistenError();
-        unlisteners.forEach(u => u());
-        return;
-      }
-      unlisteners.push(unlistenError);
-    };
-
-    setupListeners();
+      }),
+    ];
 
     return () => {
-      cleanedUpRef.current = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [open, meetingId]);
+  }, [open, meetingId, transcriptionClient]);
 
   const handleStartRetranscription = async () => {
     if (!meetingFolderPath) {
@@ -214,7 +159,7 @@ export function RetranscribeDialog({
         model_name: selectedModelDetails?.name || ''
       });
 
-      await invoke('start_retranscription_command', {
+      await transcriptionClient.startRetranscription({
         meetingId,
         meetingFolderPath,
         language: languageToSend,
@@ -233,7 +178,7 @@ export function RetranscribeDialog({
   const handleCancel = async () => {
     if (isProcessing) {
       try {
-        await invoke('cancel_retranscription_command');
+        await transcriptionClient.cancelRetranscription();
         setIsProcessing(false);
         setProgress(null);
         toast.info('Retranscription cancelled');
@@ -366,12 +311,12 @@ export function RetranscribeDialog({
                 <div className="w-full bg-gray-200 rounded-full h-3">
                   <div
                     className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${Math.min(progress.progress_percentage, 100)}%` }}
+                    style={{ width: `${Math.min(progress.progressPercentage, 100)}%` }}
                   />
                 </div>
                 <div className="flex justify-between text-xs text-gray-600 mt-1">
                   <span>{progress.stage}</span>
-                  <span>{Math.round(progress.progress_percentage)}%</span>
+                  <span>{Math.round(progress.progressPercentage)}%</span>
                 </div>
               </div>
               <p className="text-sm text-muted-foreground text-center">

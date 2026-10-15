@@ -5,7 +5,7 @@
  * Pure 1-to-1 wrapper - no error handling changes, exact same behavior as direct invoke calls.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { voxaClient } from '@/clients';
 import { Transcript } from '@/types';
 
 export interface SaveMeetingRequest {
@@ -41,8 +41,8 @@ export class StorageService {
     transcripts: Transcript[],
     folderPath: string | null
   ): Promise<SaveMeetingResponse> {
-    return invoke<SaveMeetingResponse>('api_save_transcript', {
-      meetingTitle,
+    return voxaClient.meetings.create({
+      title: meetingTitle,
       transcripts,
       folderPath,
     });
@@ -54,7 +54,7 @@ export class StorageService {
    * @returns Promise with meeting details
    */
   async getMeeting(meetingId: string): Promise<Meeting> {
-    return invoke<Meeting>('api_get_meeting', { meetingId });
+    return voxaClient.meetings.get(meetingId);
   }
 
   /**
@@ -62,7 +62,7 @@ export class StorageService {
    * @returns Promise with array of meetings
    */
   async getMeetings(): Promise<Meeting[]> {
-    return invoke<Meeting[]>('api_get_meetings');
+    return voxaClient.meetings.list();
   }
 }
 
