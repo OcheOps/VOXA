@@ -5,7 +5,7 @@ import { useConfig } from './ConfigContext';
 import { toast } from 'sonner';
 
 interface ImportDialogContextType {
-  openImportDialog: (filePath?: string | null) => void;
+  openImportDialog: () => void;
 }
 
 const ImportDialogContext = createContext<ImportDialogContextType | null>(null);
@@ -18,13 +18,13 @@ export const useImportDialog = () => {
 
 interface ImportDialogProviderProps {
   children: ReactNode;
-  onOpen: (filePath?: string | null) => void;
+  onOpen: () => void;
 }
 
 export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderProps) {
   const { betaFeatures } = useConfig();
 
-  const openImportDialog = useCallback((filePath?: string | null) => {
+  const openImportDialog = useCallback(() => {
     // Gate: Check beta feature flag before opening dialog
     if (!betaFeatures.importAndRetranscribe) {
       toast.error('Beta feature disabled', {
@@ -33,7 +33,7 @@ export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderP
       return;
     }
 
-    onOpen(filePath);
+    onOpen();
   }, [onOpen, betaFeatures]);
 
   return (

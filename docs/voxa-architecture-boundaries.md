@@ -183,7 +183,7 @@ snake_case payloads while preserving recording-relative transcript timestamps,
 duration, sequence, partial/final state and confidence.
 
 Persistent provider/model/language preferences remain configuration concerns.
-Native file selection remains media/desktop-shell behavior. Provider-specific
+Native file selection is owned by `MediaClient`. Provider-specific
 model-manager commands temporarily remain in `lib/whisper.ts` and
 `lib/parakeet.ts`; their event streams now cross `TranscriptionClient`.
 
@@ -203,4 +203,50 @@ audio, and Whisper translation-to-English. A server adapter can report remote
 execution and model download as unavailable/not applicable without pretending
 that a browser installs local Whisper models. Provider-specific configuration
 can remain an optional UI surface selected according to capabilities.
+
+## Media client boundary
+
+The current desktop path is:
+
+```text
+React UI
+  -> MediaClient
+  -> TauriMediaClient
+  -> Tauri IPC / native filesystem
+```
+
+React works with opaque `MediaSource` values, normalized import metadata and
+`MediaPlaybackSource`. It does not parse recording paths or know native command
+names. The Tauri adapter resolves meeting folders, selects and validates import
+files, reads local bytes and opens native recording folders. Audio decoding,
+play/pause/seek and duration remain browser UI behavior in `useAudioPlayer`.
+
+The future web path can preserve the same React contract:
+
+```text
+React UI
+  -> MediaClient
+  -> HttpMediaClient
+  -> Voxa API
+  -> object storage / range-capable playback
+```
+
+`MediaPlaybackSource` can carry in-memory bytes (used by desktop today) or a
+browser-consumable URL. An HTTP adapter can therefore return an authenticated
+or short-lived range-capable URL without changing playback controls.
+`MediaCapabilities` independently reports native picking, filesystem reveal,
+local byte reads, URL playback, ranged streaming, import and export/download;
+browser/server transports do not pretend to have desktop filesystem access.
+
+Ownership remains narrow:
+
+- `MediaClient` selects, validates, locates, reads and reveals media.
+- `TranscriptionClient` runs ASR over an opaque media source.
+- `RecordingClient` captures and finalizes active recording sessions.
+- `SummaryClient` generates and persists meeting summaries.
+- configuration owns persistent folder, provider and language preferences.
+
+Desktop drag/drop event receipt remains at the application-shell boundary.
+Native default-folder preferences and checkpoint recovery remain in their
+configuration/persistence boundaries rather than being absorbed into media.
 

@@ -46,7 +46,6 @@ export interface MeetingClient {
   create(input: CreateMeetingInput): Promise<CreateMeetingResult>;
   rename(meetingId: string, title: string): Promise<void>;
   delete(meetingId: string): Promise<void>;
-  openRecordingFolder(meetingId: string): Promise<void>;
 }
 
 export interface RecordingState {
@@ -236,7 +235,7 @@ export interface ModelDownloadError extends ModelDownloadComplete { error: strin
 
 export interface RetranscriptionOptions {
   meetingId: string;
-  meetingFolderPath: string;
+  source: MediaSource;
   language: string | null;
   model: string | null;
   provider: string | null;
@@ -259,7 +258,7 @@ export interface RetranscriptionResult {
 export interface RetranscriptionError { meetingId: string; error: string; }
 
 export interface ImportTranscriptionOptions {
-  sourcePath: string;
+  source: MediaSource;
   title: string;
   language: string | null;
   model: string | null;
@@ -296,7 +295,40 @@ export interface SummaryClient {
 }
 
 export interface MediaClient {
-  readAudioFile(filePath: string): Promise<number[]>;
+  readonly capabilities: MediaCapabilities;
+  getMeetingSource(meetingId: string): Promise<MediaSource | null>;
+  getPlaybackSource(source: MediaSource): Promise<MediaPlaybackSource>;
+  selectImportSource(): Promise<MediaImportSelection | null>;
+  validateDroppedImport(nativeReference: string): Promise<MediaImportSelection>;
+  openMeetingFolder(meetingId: string): Promise<void>;
+  openRecordingsFolder(): Promise<void>;
+}
+
+export interface MediaCapabilities {
+  nativeFilePicker: boolean;
+  filesystemReveal: boolean;
+  localByteReads: boolean;
+  urlPlayback: boolean;
+  rangedStreaming: boolean;
+  import: boolean;
+  exportDownload: boolean;
+}
+
+declare const mediaSourceBrand: unique symbol;
+
+/** Opaque transport-owned media locator. */
+export type MediaSource = { readonly [mediaSourceBrand]: true };
+
+export type MediaPlaybackSource =
+  | { kind: 'bytes'; bytes: number[] }
+  | { kind: 'url'; url: string };
+
+export interface MediaImportSelection {
+  source: MediaSource;
+  fileName: string;
+  durationSeconds: number;
+  sizeBytes: number;
+  format: string;
 }
 
 export interface VoxaClient {

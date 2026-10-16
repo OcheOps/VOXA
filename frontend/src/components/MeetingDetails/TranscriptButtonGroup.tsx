@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Copy, FolderOpen, RefreshCw } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
+import { type MediaSource, useVoxaClient } from '@/clients';
 
 
 interface TranscriptButtonGroupProps {
@@ -14,7 +15,6 @@ interface TranscriptButtonGroupProps {
   onCopyTranscript: () => void;
   onOpenMeetingFolder: () => Promise<void>;
   meetingId?: string;
-  meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
 }
 
@@ -24,11 +24,26 @@ export function TranscriptButtonGroup({
   onCopyTranscript,
   onOpenMeetingFolder,
   meetingId,
-  meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptButtonGroupProps) {
   const { betaFeatures } = useConfig();
+  const { media: mediaClient } = useVoxaClient();
   const [showRetranscribeDialog, setShowRetranscribeDialog] = useState(false);
+  const [meetingSource, setMeetingSource] = useState<MediaSource | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMeetingSource(null);
+    if (!meetingId || !betaFeatures.importAndRetranscribe) return;
+
+    void mediaClient.getMeetingSource(meetingId).then(source => {
+      if (!cancelled) setMeetingSource(source);
+    }).catch(error => {
+      if (!cancelled) console.error('Failed to resolve meeting media:', error);
+    });
+
+    return () => { cancelled = true; };
+  }, [betaFeatures.importAndRetranscribe, mediaClient, meetingId]);
 
   const handleRetranscribeComplete = useCallback(async () => {
     // Refetch transcripts to show the updated data
@@ -69,7 +84,7 @@ export function TranscriptButtonGroup({
           <span className="hidden @[22rem]:inline">Recording</span>
         </Button>
 
-        {betaFeatures.importAndRetranscribe && meetingId && meetingFolderPath && (
+        {betaFeatures.importAndRetranscribe && meetingId && meetingSource && (
           <Button
             size="sm"
             variant="outline"
@@ -86,12 +101,12 @@ export function TranscriptButtonGroup({
         )}
       </ButtonGroup>
 
-      {betaFeatures.importAndRetranscribe && meetingId && meetingFolderPath && (
+      {betaFeatures.importAndRetranscribe && meetingId && meetingSource && (
         <RetranscribeDialog
           open={showRetranscribeDialog}
           onOpenChange={setShowRetranscribeDialog}
           meetingId={meetingId}
-          meetingFolderPath={meetingFolderPath}
+          source={meetingSource}
           onComplete={handleRetranscribeComplete}
         />
       )}

@@ -7,8 +7,10 @@ import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
 import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
+import { useVoxaClient } from "@/clients"
 
 export function PreferenceSettings() {
+  const { media: mediaClient } = useVoxaClient();
   const {
     notificationSettings,
     storageLocations,
@@ -120,7 +122,7 @@ export function PreferenceSettings() {
           await invoke('open_models_folder');
           break;
         case 'recordings':
-          await invoke('open_recordings_folder');
+          await mediaClient.openRecordingsFolder();
           break;
       }
 

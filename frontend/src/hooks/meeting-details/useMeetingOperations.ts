@@ -9,17 +9,17 @@ interface UseMeetingOperationsProps {
 export function useMeetingOperations({
   meeting,
 }: UseMeetingOperationsProps) {
-  const { meetings: meetingClient } = useVoxaClient();
+  const { media: mediaClient } = useVoxaClient();
 
   // Open meeting folder in file explorer
   const handleOpenMeetingFolder = useCallback(async () => {
     try {
-      await meetingClient.openRecordingFolder(meeting.id);
+      await mediaClient.openMeetingFolder(meeting.id);
     } catch (error) {
       console.error('Failed to open meeting folder:', error);
       toast.error(error as string || 'Failed to open recording folder');
     }
-  }, [meeting.id, meetingClient]);
+  }, [mediaClient, meeting.id]);
 
   return {
     handleOpenMeetingFolder,

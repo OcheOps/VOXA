@@ -10,6 +10,7 @@ import type {
   TranscriptionStatus,
 } from '../contracts';
 import { combineSubscriptions, subscribeToTauriEvent } from './subscribe';
+import { getTauriMediaReference } from './media-source';
 
 interface NativeTranscriptConfig { provider?: string; }
 interface NativeTranscriptionStatus {
@@ -129,11 +130,19 @@ export class TauriTranscriptionClient implements TranscriptionClient {
   }
 
   startRetranscription(options: RetranscriptionOptions): Promise<void> {
-    return invoke('start_retranscription_command', { ...options });
+    const { source, ...nativeOptions } = options;
+    return invoke('start_retranscription_command', {
+      ...nativeOptions,
+      meetingFolderPath: getTauriMediaReference(source),
+    });
   }
   cancelRetranscription(): Promise<void> { return invoke('cancel_retranscription_command'); }
   startImport(options: ImportTranscriptionOptions): Promise<void> {
-    return invoke('start_import_audio_command', { ...options });
+    const { source, ...nativeOptions } = options;
+    return invoke('start_import_audio_command', {
+      ...nativeOptions,
+      sourcePath: getTauriMediaReference(source),
+    });
   }
   cancelImport(): Promise<void> { return invoke('cancel_import_command'); }
 

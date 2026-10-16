@@ -25,6 +25,7 @@ import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcess
 import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
+import { type MediaImportSelection, useVoxaClient } from '@/clients'
 
 
 const sourceSans3 = Source_Sans_3({
@@ -39,11 +40,11 @@ const sourceSans3 = Source_Sans_3({
 function ConditionalImportDialog({
   showImportDialog,
   handleImportDialogClose,
-  importFilePath,
+  preselectedImport,
 }: {
   showImportDialog: boolean;
   handleImportDialogClose: (open: boolean) => void;
-  importFilePath: string | null;
+  preselectedImport: MediaImportSelection | null;
 }) {
   const { betaFeatures } = useConfig();
 
@@ -56,7 +57,7 @@ function ConditionalImportDialog({
     <ImportAudioDialog
       open={showImportDialog}
       onOpenChange={handleImportDialogClose}
-      preselectedFile={importFilePath}
+      preselectedImport={preselectedImport}
     />
   );
 }
@@ -68,13 +69,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  const { media: mediaClient } = useVoxaClient()
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
 
   // Import audio state
   const [showDropOverlay, setShowDropOverlay] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
-  const [importFilePath, setImportFilePath] = useState<string | null>(null)
+  const [preselectedImport, setPreselectedImport] = useState<MediaImportSelection | null>(null)
 
   useEffect(() => {
     // Check onboarding status first
@@ -128,7 +130,7 @@ export default function RootLayout({
   }, [showOnboarding]);
 
   // Handle file drop for audio import
-  const handleFileDrop = useCallback((paths: string[]) => {
+  const handleFileDrop = useCallback(async (paths: string[]) => {
     // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)
     const betaFeatures = loadBetaFeatures();
 
@@ -147,14 +149,20 @@ export default function RootLayout({
 
     if (audioFile) {
       console.log('[Layout] Audio file dropped:', audioFile);
-      setImportFilePath(audioFile);
-      setShowImportDialog(true);
+      try {
+        const selection = await mediaClient.validateDroppedImport(audioFile);
+        setPreselectedImport(selection);
+        setShowImportDialog(true);
+      } catch (error) {
+        const message = typeof error === 'string' ? error : String(error);
+        toast.error('Could not import audio file', { description: message });
+      }
     } else if (paths.length > 0) {
       toast.error('Please drop an audio file', {
         description: `Supported formats: ${getAudioFormatsDisplayList()}`
       });
     }
-  }, []);
+  }, [mediaClient]);
 
   // Listen for drag-drop events
   useEffect(() => {
@@ -212,13 +220,13 @@ export default function RootLayout({
   const handleImportDialogClose = useCallback((open: boolean) => {
     setShowImportDialog(open);
     if (!open) {
-      setImportFilePath(null);
+      setPreselectedImport(null);
     }
   }, []);
 
   // Handler for ImportDialogProvider - opens import dialog from any child component
-  const handleOpenImportDialog = useCallback((filePath?: string | null) => {
-    setImportFilePath(filePath ?? null);
+  const handleOpenImportDialog = useCallback(() => {
+    setPreselectedImport(null);
     setShowImportDialog(true);
   }, []);
 
@@ -261,7 +269,7 @@ export default function RootLayout({
                               <ConditionalImportDialog
                                 showImportDialog={showImportDialog}
                                 handleImportDialogClose={handleImportDialogClose}
-                                importFilePath={importFilePath}
+                                preselectedImport={preselectedImport}
                               />
                             </ImportDialogProvider>
                           </RecordingPostProcessingProvider>

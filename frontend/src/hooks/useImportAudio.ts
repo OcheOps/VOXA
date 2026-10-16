@@ -1,17 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
 import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-preferences';
 import { toast } from 'sonner';
-import { useVoxaClient } from '@/clients';
+import { type MediaImportSelection, useVoxaClient } from '@/clients';
 
-export interface AudioFileInfo {
-  path: string;
-  filename: string;
-  duration_seconds: number;
-  size_bytes: number;
-  format: string;
-}
+export type AudioFileInfo = MediaImportSelection;
 
 export interface ImportProgress {
   stage: string;
@@ -45,9 +38,8 @@ export interface UseImportAudioReturn {
   isProcessing: boolean;
   isBusy: boolean;
   selectFile: () => Promise<AudioFileInfo | null>;
-  validateFile: (path: string) => Promise<AudioFileInfo | null>;
+  acceptSelection: (selection: AudioFileInfo) => void;
   startImport: (
-    sourcePath: string,
     title: string,
     language?: string | null,
     model?: string | null,
@@ -61,7 +53,7 @@ export function useImportAudio({
   onComplete,
   onError,
 }: UseImportAudioOptions = {}): UseImportAudioReturn {
-  const { transcription: transcriptionClient } = useVoxaClient();
+  const { media: mediaClient, transcription: transcriptionClient } = useVoxaClient();
   const [status, setStatus] = useState<ImportStatus>('idle');
   const [fileInfo, setFileInfo] = useState<AudioFileInfo | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
@@ -138,7 +130,7 @@ export function useImportAudio({
     setError(null);
 
     try {
-      const result = await invoke<AudioFileInfo | null>('select_and_validate_audio_command');
+      const result = await mediaClient.selectImportSource();
       if (result) {
         setFileInfo(result);
         setStatus('idle');
@@ -155,31 +147,17 @@ export function useImportAudio({
       onErrorRef.current?.(errorMsg);
       return null;
     }
-  }, []);
+  }, [mediaClient]);
 
-  // Validate a file from a given path (for drag-drop)
-  const validateFile = useCallback(async (path: string): Promise<AudioFileInfo | null> => {
-    setStatus('validating');
+  const acceptSelection = useCallback((selection: AudioFileInfo) => {
+    setFileInfo(selection);
+    setStatus('idle');
     setError(null);
-
-    try {
-      const result = await invoke<AudioFileInfo>('validate_audio_file_command', { path });
-      setFileInfo(result);
-      setStatus('idle');
-      return result;
-    } catch (err: any) {
-      setStatus('error');
-      const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to validate file');
-      setError(errorMsg);
-      onErrorRef.current?.(errorMsg);
-      return null;
-    }
   }, []);
 
   // Start the import process
   const startImport = useCallback(
     async (
-      sourcePath: string,
       title: string,
       language?: string | null,
       model?: string | null,
@@ -193,16 +171,20 @@ export function useImportAudio({
       try {
         if (fileInfo) {
           await Analytics.track('import_audio_started', {
-            file_size_bytes: fileInfo.size_bytes.toString(),
-            duration_seconds: fileInfo.duration_seconds.toString(),
+            file_size_bytes: fileInfo.sizeBytes.toString(),
+            duration_seconds: fileInfo.durationSeconds.toString(),
             language: language || 'auto',
             model_provider: provider || '',
             model_name: model || ''
           });
         }
 
+        if (!fileInfo) {
+          throw new Error('No validated audio source selected');
+        }
+
         await transcriptionClient.startImport({
-          sourcePath,
+          source: fileInfo.source,
           title,
           language: language || null,
           model: model || null,
@@ -250,7 +232,7 @@ export function useImportAudio({
     isProcessing: status === 'processing',
     isBusy: status === 'processing' || status === 'validating',
     selectFile,
-    validateFile,
+    acceptSelection,
     startImport,
     cancelImport,
     reset,

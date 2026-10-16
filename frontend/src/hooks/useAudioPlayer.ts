@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { type MediaSource, useVoxaClient } from '@/clients';
 
-export const useAudioPlayer = (audioPath: string | null) => {
+export const useAudioPlayer = (mediaSource: MediaSource | null) => {
+  const { media: mediaClient } = useVoxaClient();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -12,6 +13,7 @@ export const useAudioPlayer = (audioPath: string | null) => {
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const rafRef = useRef<number>();
   const seekTimeRef = useRef<number>(0);
+  const loadRequestRef = useRef(0);
 
   const initAudioContext = async () => {
     try {
@@ -56,12 +58,11 @@ export const useAudioPlayer = (audioPath: string | null) => {
     };
   }, []);
 
-  const loadAudio = async () => {
-    if (!audioPath) {
-      console.log('No audio path provided');
-      return;
-    }
-
+  const loadAudio = async (
+    source: MediaSource,
+    requestId: number,
+    signal: AbortSignal,
+  ) => {
     try {
       // Initialize context first
       const initialized = await initAudioContext();
@@ -70,21 +71,20 @@ export const useAudioPlayer = (audioPath: string | null) => {
         return;
       }
 
-      console.log('Loading audio from:', audioPath);
-      
-      // Read the file using Tauri command
-      const result = await invoke<number[]>('read_audio_file', { 
-        filePath: audioPath 
-      });
-      
-      if (!result || result.length === 0) {
+      const playbackSource = await mediaClient.getPlaybackSource(source);
+      if (requestId !== loadRequestRef.current) return;
+      const audioData = playbackSource.kind === 'bytes'
+        ? new Uint8Array(playbackSource.bytes).buffer
+        : await fetch(playbackSource.url, { signal }).then(response => {
+            if (!response.ok) throw new Error(`Media request failed: ${response.status}`);
+            return response.arrayBuffer();
+          });
+
+      if (requestId !== loadRequestRef.current) return;
+
+      if (audioData.byteLength === 0) {
         throw new Error('Empty audio data received');
       }
-      
-      console.log('Audio file read, size:', result.length, 'bytes');
-      
-      // Create a copy of the audio data
-      const audioData = new Uint8Array(result).buffer;
       
       console.log('Created audio buffer, size:', audioData.byteLength, 'bytes');
       
@@ -108,12 +108,14 @@ export const useAudioPlayer = (audioPath: string | null) => {
         );
       });
       
+      if (requestId !== loadRequestRef.current) return;
       audioBufferRef.current = audioBuffer;
       setDuration(audioBuffer.duration);
       setCurrentTime(0);
       setError(null);
       console.log('Audio loaded and ready to play');
     } catch (error) {
+      if (signal.aborted || requestId !== loadRequestRef.current) return;
       console.error('Error loading audio:', error);
       if (error instanceof Error) {
         console.error('Error details:', {
@@ -126,13 +128,39 @@ export const useAudioPlayer = (audioPath: string | null) => {
     }
   };
 
-  // Load audio when path changes
+  // Load audio when the opaque media source changes
   useEffect(() => {
-    console.log('Audio path changed:', audioPath);
-    if (audioPath) {
-      loadAudio();
+    const requestId = ++loadRequestRef.current;
+    const controller = new AbortController();
+
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
     }
-  }, [audioPath]);
+    if (sourceRef.current) {
+      try {
+        sourceRef.current.stop();
+        sourceRef.current.disconnect();
+      } catch {
+        // The source may already have stopped naturally.
+      }
+      sourceRef.current = null;
+    }
+    audioBufferRef.current = null;
+    seekTimeRef.current = 0;
+    setIsPlaying(false);
+    setDuration(0);
+    setCurrentTime(0);
+
+    if (mediaSource) {
+      void loadAudio(mediaSource, requestId, controller.signal);
+    }
+
+    return () => {
+      controller.abort();
+      if (loadRequestRef.current === requestId) loadRequestRef.current += 1;
+    };
+  }, [mediaClient, mediaSource]);
 
   const stopPlayback = () => {
     console.log('Stopping playback');

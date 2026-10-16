@@ -21,14 +21,14 @@ import { useConfig } from '@/contexts/ConfigContext';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import Analytics from '@/lib/analytics';
-import { useVoxaClient } from '@/clients';
+import { type MediaSource, useVoxaClient } from '@/clients';
 import type { RetranscriptionProgress } from '@/clients/contracts';
 
 interface RetranscribeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   meetingId: string;
-  meetingFolderPath: string | null;
+  source: MediaSource;
   onComplete?: () => void;
 }
 
@@ -36,7 +36,7 @@ export function RetranscribeDialog({
   open,
   onOpenChange,
   meetingId,
-  meetingFolderPath,
+  source,
   onComplete,
 }: RetranscribeDialogProps) {
   const { transcription: transcriptionClient } = useVoxaClient();
@@ -142,11 +142,6 @@ export function RetranscribeDialog({
   }, [open, meetingId, transcriptionClient]);
 
   const handleStartRetranscription = async () => {
-    if (!meetingFolderPath) {
-      setError('Meeting folder path not available');
-      return;
-    }
-
     setIsProcessing(true);
     setError(null);
     setProgress(null);
@@ -161,7 +156,7 @@ export function RetranscribeDialog({
 
       await transcriptionClient.startRetranscription({
         meetingId,
-        meetingFolderPath,
+        source,
         language: languageToSend,
         model: selectedModelDetails?.name || null,
         provider: selectedModelDetails?.provider || null,
@@ -341,7 +336,6 @@ export function RetranscribeDialog({
               <Button
                 onClick={handleStartRetranscription}
                 className="bg-blue-600 hover:bg-blue-700"
-                disabled={!meetingFolderPath}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Start Retranscription

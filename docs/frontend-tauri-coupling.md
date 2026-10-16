@@ -1,9 +1,9 @@
 # Remaining frontend Tauri coupling
 
-After the meeting, recording and active transcription slices, 56 frontend
+After the meeting, recording, active transcription and media slices, 54 frontend
 source files import a Tauri API directly. Six are intentional adapter-layer
 files under `src/clients/tauri/` (including the shared subscription helper);
-the other 50 are future migration inventory.
+the other 48 are future migration inventory.
 
 ## Successfully migrated recording files
 
@@ -44,6 +44,28 @@ The obsolete `src/services/transcriptService.ts` was removed. Native
 transcription command names, event names and payload casing now live in
 `TauriTranscriptionClient`.
 
+## Successfully migrated media files
+
+These files now use `MediaClient` for media/file behavior:
+
+- `src/hooks/useAudioPlayer.ts` requests a transport-neutral playback source.
+- `src/hooks/useImportAudio.ts` delegates native selection and validation and
+  retains only an opaque `MediaSource` for the transcription job.
+- `src/components/ImportAudio/ImportAudioDialog.tsx` renders normalized media
+  metadata and no longer reads or forwards a file path.
+- `src/components/MeetingDetails/TranscriptButtonGroup.tsx` resolves meeting
+  media through the client before offering retranscription.
+- `src/components/MeetingDetails/RetranscribeDialog.tsx` forwards an opaque
+  source rather than a meeting folder path.
+- `src/hooks/meeting-details/useMeetingOperations.ts` opens a meeting folder
+  through `MediaClient`.
+- `src/components/RecordingSettings.tsx` and
+  `src/components/PreferenceSettings.tsx` open the recordings folder through
+  `MediaClient`; their remaining Tauri imports belong to configuration.
+
+Native local reads, file-picker/validation, media metadata lookup and folder
+command names now live in `TauriMediaClient`.
+
 ## Intentional adapter imports (6)
 
 - `src/clients/tauri/meeting-client.ts`
@@ -64,12 +86,13 @@ desktop recording save path.
 - `src/hooks/useRecordingStop.ts`: uses the Tauri store plugin for an analytics
   preference; stop and transcription-complete events are client-backed.
 - `src/components/RecordingSettings.tsx` and `src/contexts/ConfigContext.tsx`:
-  recording preferences, default folders and configuration persistence were
+  recording preferences, default-folder lookup and configuration persistence were
   deliberately excluded from the active recording transport slice.
 - `src/components/AudioBackendSelector.tsx`, `BluetoothPlaybackWarning.tsx`,
   `PermissionWarning.tsx`, and onboarding `PermissionsStep.tsx`: native backend,
   playback-device and OS permission UI remain platform configuration concerns.
-- `src/components/PreferenceSettings.tsx`: opens the native recordings folder.
+- `src/components/PreferenceSettings.tsx`: retains database/models folder
+  actions and notification preferences; recordings-folder opening is client-backed.
 - `src/lib/recordingNotification.tsx`: desktop notification integration.
 - `src/lib/analytics.ts`: native analytics command forwarding.
 
@@ -91,29 +114,45 @@ microphone hot-swap UI paths invoke or listen to Tauri directly.
   Provider initialization, readiness, and model events are client-backed.
 - `ConfigContext.tsx`, settings and sidebar retain transcript configuration,
   language preference and native models-folder persistence/UI operations.
-- `useImportAudio.ts` retains native file selection and validation because
-  those are media/desktop-shell operations; starting, cancelling and observing
-  the transcription job use `TranscriptionClient`.
+- `useImportAudio.ts` uses `MediaClient` for file selection/validation and
+  `TranscriptionClient` for starting, cancelling and observing the ASR job.
 - `useTranscriptRecovery.ts` retains checkpoint inspection/recovery commands,
   which straddle persistence and recovery orchestration rather than live ASR.
 
 No React consumer knows the native names for live transcript, transcription
 completion/error, model download, retranscription, or import-job events.
 
+## Remaining media-specific coupling
+
+- `src/app/layout.tsx` receives native desktop drag/drop events and paths. This
+  intentionally remains an application-shell boundary; it asks `MediaClient`
+  to validate the path before the import dialog receives an opaque selection.
+- `src/contexts/ConfigContext.tsx` and `src/components/RecordingSettings.tsx`
+  read the default recordings location as a persistent desktop preference.
+- `src/hooks/useTranscriptRecovery.ts` reads the active recording session
+  folder while orchestrating checkpoint recovery. That belongs to the future
+  persistence/recovery boundary rather than playback/import media.
+- Database and models-folder actions remain configuration/model-manager or
+  desktop-shell concerns, not `MediaClient` responsibilities.
+
+No React playback/import/retranscription component invokes media commands,
+constructs meeting paths, or receives a selected native file path. Only the
+Tauri adapter can unwrap a `MediaSource` to its native reference.
+
 ## Remaining files by area
 
-The 56 direct-import files comprise:
+The 54 direct-import files comprise:
 
 - 6 transport-adapter files
 - 4 app/page files
 - 25 components
 - 3 contexts
-- 10 hooks
+- 8 hooks
 - 6 libraries
 - 2 services
 
 The largest remaining areas are model management/transcription, summary
-generation, onboarding/permissions, configuration, analytics, updates, media
-import/playback and desktop-shell integration. Future work should migrate one
+generation, onboarding/permissions, configuration, analytics, updates and
+desktop-shell integration. Future work should migrate one
 capability slice at a time rather than mechanically remove imports.
 

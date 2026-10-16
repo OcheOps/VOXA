@@ -7,6 +7,7 @@ import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useVoxaClient } from '@/clients';
 
 export interface RecordingPreferences {
   save_folder: string;
@@ -21,6 +22,7 @@ interface RecordingSettingsProps {
 }
 
 export function RecordingSettings({ onSave }: RecordingSettingsProps) {
+  const { media: mediaClient } = useVoxaClient();
   const [preferences, setPreferences] = useState<RecordingPreferences>({
     save_folder: '',
     auto_save: true,
@@ -107,7 +109,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
 
   const handleOpenFolder = async () => {
     try {
-      await invoke('open_recordings_folder');
+      await mediaClient.openRecordingsFolder();
     } catch (error) {
       console.error('Failed to open recordings folder:', error);
     }

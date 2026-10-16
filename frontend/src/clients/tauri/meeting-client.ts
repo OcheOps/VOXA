@@ -49,7 +49,4 @@ export class TauriMeetingClient implements MeetingClient {
     await invoke('api_delete_meeting', { meetingId });
   }
 
-  async openRecordingFolder(meetingId: string): Promise<void> {
-    await invoke('open_meeting_folder', { meetingId });
-  }
 }

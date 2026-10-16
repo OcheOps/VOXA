@@ -45,7 +45,6 @@ describe('TauriMeetingClient', () => {
       .toEqual({ meeting_id: 'meeting-2' });
     await client.rename('meeting-1', 'Renamed');
     await client.delete('meeting-1');
-    await client.openRecordingFolder('meeting-1');
 
     expect(calls).toEqual([
       {
@@ -57,7 +56,6 @@ describe('TauriMeetingClient', () => {
         args: { meetingId: 'meeting-1', title: 'Renamed' },
       },
       { command: 'api_delete_meeting', args: { meetingId: 'meeting-1' } },
-      { command: 'open_meeting_folder', args: { meetingId: 'meeting-1' } },
     ]);
   });
 });

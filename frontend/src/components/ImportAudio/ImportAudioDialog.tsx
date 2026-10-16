@@ -37,12 +37,13 @@ import { useRouter } from 'next/navigation';
 import { useSidebar } from '../Sidebar/SidebarProvider';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
+import type { MediaImportSelection } from '@/clients';
 
 
 interface ImportAudioDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  preselectedFile?: string | null;
+  preselectedImport?: MediaImportSelection | null;
   onComplete?: () => void;
 }
 
@@ -67,7 +68,7 @@ function formatFileSize(bytes: number): string {
 export function ImportAudioDialog({
   open,
   onOpenChange,
-  preselectedFile,
+  preselectedImport,
   onComplete,
 }: ImportAudioDialogProps) {
   const router = useRouter();
@@ -116,7 +117,7 @@ export function ImportAudioDialog({
     isProcessing,
     isBusy,
     selectFile,
-    validateFile,
+    acceptSelection,
     startImport,
     cancelImport,
     reset,
@@ -140,24 +141,20 @@ export function ImportAudioDialog({
       setSelectedLang(selectedLanguage || 'auto');
       setShowAdvanced(false);
 
-      // Validate preselected file if provided
-      if (preselectedFile) {
-        validateFile(preselectedFile).then((info) => {
-          if (info) {
-            setTitle(info.filename);
-          }
-        });
+      if (preselectedImport) {
+        acceptSelection(preselectedImport);
+        setTitle(preselectedImport.fileName);
       }
 
       // Fetch available models using centralized hook
       fetchModels();
     }
-  }, [open, preselectedFile, selectedLanguage, transcriptModelConfig, reset, resetSelection, validateFile, fetchModels]);
+  }, [open, preselectedImport, selectedLanguage, transcriptModelConfig, reset, resetSelection, acceptSelection, fetchModels]);
 
   // Update title when fileInfo changes
   useEffect(() => {
     if (fileInfo && !title && !titleModifiedByUser) {
-      setTitle(fileInfo.filename);
+      setTitle(fileInfo.fileName);
     }
   }, [fileInfo, title, titleModifiedByUser]);
 
@@ -180,7 +177,7 @@ export function ImportAudioDialog({
   const handleSelectFile = async () => {
     const info = await selectFile();
     if (info) {
-      setTitle(info.filename);
+      setTitle(info.fileName);
     }
   };
 
@@ -188,8 +185,7 @@ export function ImportAudioDialog({
     if (!fileInfo) return;
 
     await startImport(
-      fileInfo.path,
-      title || fileInfo.filename,
+      title || fileInfo.fileName,
       isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang,
       selectedModel?.name || null,
       selectedModel?.provider || null
@@ -273,15 +269,15 @@ export function ImportAudioDialog({
                   <div className="flex items-start gap-3">
                     <FileAudio className="h-8 w-8 text-blue-600 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-900 truncate">{fileInfo.filename}</p>
+                      <p className="font-medium text-gray-900 truncate">{fileInfo.fileName}</p>
                       <div className="flex items-center gap-4 text-sm text-gray-500 mt-1">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5" />
-                          {formatDuration(fileInfo.duration_seconds)}
+                          {formatDuration(fileInfo.durationSeconds)}
                         </span>
                         <span className="flex items-center gap-1">
                           <HardDrive className="h-3.5 w-3.5" />
-                          {formatFileSize(fileInfo.size_bytes)}
+                          {formatFileSize(fileInfo.sizeBytes)}
                         </span>
                         <span className="text-blue-600 font-medium">{fileInfo.format}</span>
                       </div>

@@ -29,6 +29,7 @@ mock.module('@tauri-apps/api/core', () => ({ invoke }));
 mock.module('@tauri-apps/api/event', () => ({ listen }));
 
 const { TauriTranscriptionClient } = await import('../../src/clients/tauri/transcription-client');
+const { createTauriMediaSource } = await import('../../src/clients/tauri/media-source');
 
 beforeEach(() => {
   calls.length = 0;
@@ -75,14 +76,14 @@ describe('TauriTranscriptionClient commands', () => {
 
     await client.startRetranscription({
       meetingId: 'meeting-1',
-      meetingFolderPath: '/meetings/1',
+      source: createTauriMediaSource('/meetings/1'),
       language: 'fr',
       model: 'small',
       provider: 'whisper',
     });
     await client.cancelRetranscription();
     await client.startImport({
-      sourcePath: '/tmp/call.wav',
+      source: createTauriMediaSource('/tmp/call.wav'),
       title: 'Call',
       language: null,
       model: 'small',
