@@ -1,7 +1,17 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { useEffect } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import type { SummaryProcessResponse } from '../../src/types';
+import type { SummaryProcessStatus } from '../../src/types';
+
+interface NativeSummaryProcessResponse {
+  status: SummaryProcessStatus;
+  meetingName: string | null;
+  meeting_id: string;
+  start: string | null;
+  end: string | null;
+  data: unknown | null;
+  error: string | null;
+}
 
 const originalCore = { ...await import('@tauri-apps/api/core') };
 const originalAnalytics = { ...await import('../../src/lib/analytics') };
@@ -42,7 +52,7 @@ let readTranscripts: (id: string) => Promise<unknown>;
 const transcriptPage = {
   transcripts: [{ id: 'transcript', text: 'Meeting transcript', timestamp: '00:00' }], total_count: 1, has_more: false,
 };
-let savedSummary: SummaryProcessResponse;
+let savedSummary: NativeSummaryProcessResponse;
 const invoke = mock(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
   if (command === 'api_get_meetings') return [];
   if (command === 'api_get_summary') return { ...savedSummary, meeting_id: args!.meetingId };

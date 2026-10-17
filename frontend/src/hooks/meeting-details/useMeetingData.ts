@@ -2,9 +2,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { MeetingSummary, Summary, Transcript } from '@/types';
 import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
-import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { hasVisibleSummaryContent } from '@/lib/summary-content';
+import { useVoxaClient } from '@/clients';
 
 interface UseMeetingDataProps {
   meeting: any;
@@ -13,6 +13,7 @@ interface UseMeetingDataProps {
 }
 
 export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMeetingDataProps) {
+  const { summaries: summaryClient } = useVoxaClient();
   // State
   // Use prop directly since summary generation fetches transcripts independently
   const transcripts = meeting.transcripts;
@@ -47,11 +48,8 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     const formattedSummary = 'markdown' in summary || 'summary_json' in summary
       ? summary
       : { MeetingName: meetingTitle, ...summary };
-    await invokeTauri('api_save_meeting_summary', {
-      meetingId: meeting.id,
-      summary: formattedSummary,
-    });
-  }, [meeting.id, meetingTitle]);
+    await summaryClient.save(meeting.id, formattedSummary);
+  }, [meeting.id, meetingTitle, summaryClient]);
 
   const saveAllChanges = useCallback(async () => {
     setIsSaving(true);

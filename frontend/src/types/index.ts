@@ -98,27 +98,6 @@ export type SummaryProcessStatus =
   | 'error'
   | 'idle';
 
-export interface ProcessTranscriptResponse {
-  message: string;
-  process_id: string;
-}
-
-export interface CancelSummaryResponse {
-  cancelled: boolean;
-  message: string;
-  meeting_id: string;
-}
-
-export interface SummaryProcessResponse {
-  status: SummaryProcessStatus;
-  meetingName: string | null;
-  meeting_id: string;
-  start: string | null;
-  end: string | null;
-  data: unknown | null;
-  error: string | null;
-}
-
 // Pagination types for optimized transcript loading
 export interface MeetingMetadata {
   id: string;

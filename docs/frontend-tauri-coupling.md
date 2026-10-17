@@ -1,9 +1,9 @@
 # Remaining frontend Tauri coupling
 
-After the meeting, recording, active transcription and media slices, 54 frontend
+After the meeting, recording, active transcription, media and summary slices, 50 frontend
 source files import a Tauri API directly. Six are intentional adapter-layer
 files under `src/clients/tauri/` (including the shared subscription helper);
-the other 48 are future migration inventory.
+the other 44 are future migration inventory.
 
 ## Successfully migrated recording files
 
@@ -65,6 +65,27 @@ These files now use `MediaClient` for media/file behavior:
 
 Native local reads, file-picker/validation, media metadata lookup and folder
 command names now live in `TauriMediaClient`.
+
+## Successfully migrated summary files
+
+The active summary lifecycle now uses `SummaryClient`:
+
+- `src/hooks/meeting-details/useSummaryGeneration.ts` starts and cancels jobs,
+  performs runtime readiness checks, reloads results and uses `MeetingClient`
+  for transcripts.
+- `src/components/Sidebar/SidebarProvider.tsx` retains existing polling timing
+  and request ownership while reading state through `SummaryClient`.
+- `src/app/meeting-details/page.tsx` restores summary job state through the
+  client; its remaining native calls are summary configuration/default setup.
+- `src/hooks/meeting-details/useMeetingData.ts` saves edited summaries through
+  the client.
+- `src/hooks/meeting-details/useTemplates.ts` lists runtime templates through
+  the client.
+
+`TauriSummaryClient` now owns native generation, cancellation, state, save,
+template and runtime-preflight command names plus snake_case result mapping.
+There are no active summary lifecycle Tauri events; the native workflow uses
+polling.
 
 ## Intentional adapter imports (6)
 
@@ -139,20 +160,38 @@ No React playback/import/retranscription component invokes media commands,
 constructs meeting paths, or receives a selected native file path. Only the
 Tauri adapter can unwrap a `MediaSource` to its native reference.
 
+## Remaining summary-specific coupling
+
+- `ModelSettingsModal.tsx`, `SummaryModelSettings.tsx`, `Sidebar/index.tsx`,
+  `page-content.tsx`, `ConfigContext.tsx` and `configService.ts` retain saved
+  provider, endpoint, API-key, default-model and auto-summary configuration.
+- `page.tsx` retains initial default-model selection and persistence for the
+  auto-summary preference path. Active generation and state restoration are
+  client-backed.
+- `lib/summary-language-preferences.ts` owns per-meeting/default output-language
+  persistence and language detection metadata, not summary job execution.
+- `lib/builtin-ai.ts`, `BuiltInModelManager.tsx`, onboarding and download UI
+  retain model install/download/delete/folder behavior. Only readiness needed
+  immediately before execution is exposed by `SummaryClient`.
+- Analytics Tauri calls remain in the analytics boundary.
+
+No React consumer knows `api_process_transcript`, `api_get_summary`,
+`api_cancel_summary`, `api_save_meeting_summary`, or `api_list_templates`.
+
 ## Remaining files by area
 
-The 54 direct-import files comprise:
+The 50 direct-import files comprise:
 
 - 6 transport-adapter files
 - 4 app/page files
-- 25 components
+- 24 components
 - 3 contexts
-- 8 hooks
+- 5 hooks
 - 6 libraries
 - 2 services
 
-The largest remaining areas are model management/transcription, summary
-generation, onboarding/permissions, configuration, analytics, updates and
+The largest remaining areas are model management, onboarding/permissions,
+configuration, analytics, updates and
 desktop-shell integration. Future work should migrate one
 capability slice at a time rather than mechanically remove imports.
 

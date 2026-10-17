@@ -3,10 +3,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Analytics from '@/lib/analytics';
-import { invoke } from '@tauri-apps/api/core';
 import { useVoxaClient } from '@/clients';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
-import type { SummaryProcessResponse } from '@/types';
+import type { SummaryState } from '@/clients';
 
 
 
@@ -58,7 +57,7 @@ interface SidebarContextType {
   startSummaryPolling: (
     meetingId: string,
     processId: string,
-    onUpdate: (result: SummaryProcessResponse) => void | Promise<void>
+    onUpdate: (result: SummaryState) => void | Promise<void>
   ) => void;
   stopSummaryPolling: (meetingId: string, processId?: string) => void;
   // Refetch meetings from backend
@@ -77,7 +76,7 @@ export const useSidebar = () => {
 };
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const { meetings: meetingClient } = useVoxaClient();
+  const { meetings: meetingClient, summaries: summaryClient } = useVoxaClient();
   const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: '+ New Call' });
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
@@ -210,7 +209,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const startSummaryPolling = React.useCallback((
     meetingId: string,
     processId: string,
-    onUpdate: (result: SummaryProcessResponse) => void | Promise<void>
+    onUpdate: (result: SummaryState) => void | Promise<void>
   ) => {
     stopSummaryPolling(meetingId);
     let pollCount = 0;
@@ -227,9 +226,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
           await onUpdate({
             status: 'error',
             meetingName: null,
-            meeting_id: meetingId,
-            start: processId,
-            end: null,
+            meetingId,
+            processId,
+            endedAt: null,
             data: null,
             error: 'Summary generation timed out after 15 minutes. Please try again or check your model configuration.',
           });
@@ -239,9 +238,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const result = await invoke<SummaryProcessResponse>('api_get_summary', { meetingId });
+        const result = await summaryClient.getState(meetingId);
         const current = summaryPollsRef.current.get(meetingId);
-        if (current !== entry || result.start !== processId) {
+        if (current !== entry || result.processId !== processId) {
           return;
         }
         await onUpdate(result);
@@ -264,9 +263,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
           await onUpdate({
             status: 'error',
             meetingName: null,
-            meeting_id: meetingId,
-            start: processId,
-            end: null,
+            meetingId,
+            processId,
+            endedAt: null,
             data: null,
             error: error instanceof Error ? error.message : 'Unknown error',
           });
@@ -287,7 +286,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
     const timer = setInterval(() => void poll(), 5000);
     summaryPollsRef.current.set(meetingId, { processId, timer, inFlight: false });
-  }, [stopSummaryPolling]);
+  }, [stopSummaryPolling, summaryClient]);
 
   useEffect(() => () => {
     summaryPollsRef.current.forEach(({ timer }) => clearInterval(timer));

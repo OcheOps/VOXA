@@ -1,25 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
+import { type SummaryTemplate, useVoxaClient } from '@/clients';
 
 export function useTemplates() {
-  const [availableTemplates, setAvailableTemplates] = useState<Array<{
-    id: string;
-    name: string;
-    description: string;
-  }>>([]);
+  const { summaries: summaryClient } = useVoxaClient();
+  const [availableTemplates, setAvailableTemplates] = useState<SummaryTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('standard_meeting');
 
   // Fetch available templates on mount
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
-        const templates = await invokeTauri('api_list_templates') as Array<{
-          id: string;
-          name: string;
-          description: string;
-        }>;
+        const templates = await summaryClient.listTemplates();
         console.log('Available templates:', templates);
         setAvailableTemplates(templates);
       } catch (error) {
@@ -27,7 +20,7 @@ export function useTemplates() {
       }
     };
     fetchTemplates();
-  }, []);
+  }, [summaryClient]);
 
   // Handle template selection
   const handleTemplateSelection = useCallback((templateId: string, templateName: string) => {

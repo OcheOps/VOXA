@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { MeetingSummary, SummaryProcessResponse } from '@/types';
+import { MeetingSummary } from '@/types';
+import type { SummaryState } from '@/clients';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
@@ -37,7 +38,7 @@ export default function PageContent({
 }: {
   meeting: any;
   summaryData: MeetingSummary | null;
-  initialSummary: SummaryProcessResponse | null;
+  initialSummary: SummaryState | null;
   shouldAutoGenerate?: boolean;
   onAutoGenerateComplete?: () => void;
   onMeetingUpdated?: () => Promise<void>;

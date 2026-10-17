@@ -2,7 +2,18 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'b
 import { useEffect, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { parseSummaryContent } from '../../src/lib/summary-content';
-import type { MeetingSummary, SummaryProcessResponse } from '../../src/types';
+import type { MeetingSummary, SummaryProcessStatus } from '../../src/types';
+import type { SummaryState } from '../../src/clients';
+
+interface NativeSummaryProcessResponse {
+  status: SummaryProcessStatus;
+  meetingName: string | null;
+  meeting_id: string;
+  start: string | null;
+  end: string | null;
+  data: unknown | null;
+  error: string | null;
+}
 
 // Bun shares module mocks between test files; restore application modules after this suite.
 const originalAnalytics = { ...await import('../../src/lib/analytics') };
@@ -24,7 +35,7 @@ mock.module('../../src/lib/analytics', () => ({ default: {
   trackSummaryGenerationCompleted: trackCompletion,
 } }));
 let startProcess: () => Promise<{ process_id: string }>;
-let getSummary: (meetingId: string) => Promise<SummaryProcessResponse>;
+let getSummary: (meetingId: string) => Promise<NativeSummaryProcessResponse>;
 const invoke = mock(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
   if (command === 'api_get_meetings') return [];
   if (command === 'api_get_summary') return getSummary(args!.meetingId as string);
@@ -43,14 +54,14 @@ mock.module('../../src/lib/summary-language-preferences', () => ({
 const { SidebarProvider, useSidebar } = await import('../../src/components/Sidebar/SidebarProvider');
 const { useSummaryGeneration } = await import('../../src/hooks/meeting-details/useSummaryGeneration');
 
-const response = (overrides: Partial<SummaryProcessResponse> = {}): SummaryProcessResponse => ({
+const response = (overrides: Partial<NativeSummaryProcessResponse> = {}): NativeSummaryProcessResponse => ({
   meeting_id: 'meeting-a', status: 'pending', start: 'attempt-a', end: null,
   data: null, error: null, meetingName: 'Meeting A', ...overrides,
 });
 let configuredModel = 'test';
 let state: ReturnType<typeof useSummaryGeneration>;
 function Status({ initialSummary, meetingId = 'meeting-a' }: {
-  initialSummary: SummaryProcessResponse; meetingId?: string;
+  initialSummary: SummaryState; meetingId?: string;
 }) {
   const [summary, setAiSummary] = useState<MeetingSummary | null>(() => parseSummaryContent(initialSummary.data));
   const [title, updateMeetingTitle] = useState('Original title');
@@ -64,6 +75,7 @@ function Status({ initialSummary, meetingId = 'meeting-a' }: {
 }
 
 let renderer: ReactTestRenderer;
+const normalizedResponses = new WeakMap<NativeSummaryProcessResponse, SummaryState>();
 const timers = new Map<number, () => Promise<void>>();
 let nextTimer = 0;
 const realSetInterval = globalThis.setInterval;
@@ -84,9 +96,22 @@ afterEach(async () => {
   globalThis.setInterval = realSetInterval;
   globalThis.clearInterval = realClearInterval;
 });
-async function show(initialSummary: SummaryProcessResponse | null, meetingId = 'meeting-a') {
+async function show(initialSummary: NativeSummaryProcessResponse | null, meetingId = 'meeting-a') {
   await act(async () => {
-    const view = <SidebarProvider>{initialSummary && <Status key={meetingId} initialSummary={initialSummary} meetingId={meetingId} />}</SidebarProvider>;
+    let normalized = initialSummary ? normalizedResponses.get(initialSummary) : null;
+    if (initialSummary && !normalized) {
+      normalized = {
+        status: initialSummary.status,
+        meetingName: initialSummary.meetingName,
+        meetingId: initialSummary.meeting_id,
+        processId: initialSummary.start,
+        endedAt: initialSummary.end,
+        data: initialSummary.data,
+        error: initialSummary.error,
+      };
+      normalizedResponses.set(initialSummary, normalized);
+    }
+    const view = <SidebarProvider>{normalized && <Status key={meetingId} initialSummary={normalized} meetingId={meetingId} />}</SidebarProvider>;
     if (renderer) renderer.update(view); else renderer = create(view);
   });
 }
@@ -218,7 +243,7 @@ describe('summary state restored when returning to a meeting', () => {
   });
 
   test('a late completion from meeting A cannot change meeting B', async () => {
-    let resolve!: (value: SummaryProcessResponse) => void;
+    let resolve!: (value: NativeSummaryProcessResponse) => void;
     getSummary = () => new Promise(done => { resolve = done; });
     await show(response());
     await tick();
@@ -258,7 +283,7 @@ describe('summary state restored when returning to a meeting', () => {
   });
 
   test('old in-flight poll cannot stop a resumed poll for the same process', async () => {
-    let resolve!: (value: SummaryProcessResponse) => void;
+    let resolve!: (value: NativeSummaryProcessResponse) => void;
     getSummary = () => new Promise(done => { resolve = done; });
     await show(response());
     await tick();

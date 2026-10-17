@@ -250,3 +250,54 @@ Desktop drag/drop event receipt remains at the application-shell boundary.
 Native default-folder preferences and checkpoint recovery remain in their
 configuration/persistence boundaries rather than being absorbed into media.
 
+## Summary client boundary
+
+The current desktop path is:
+
+```text
+React UI
+  -> SummaryClient
+  -> TauriSummaryClient
+  -> Tauri IPC
+  -> existing summary processor / LLM provider
+```
+
+`SummaryClient` owns asynchronous job creation, state/result reads,
+cancellation, edited-summary persistence, template inventory and the Ollama or
+built-in-model readiness checks required immediately before execution. Native
+snake_case job identifiers are normalized at the adapter. Generation and
+regeneration intentionally share the same request because the existing native
+pipeline distinguishes them through UI state rather than a different command.
+
+The desktop processor is polling-based; `SidebarProvider` keeps the established
+five-second interval, timeout, request ownership and navigation restoration,
+but polling reads now cross `SummaryClient` instead of invoking Tauri directly.
+There are no active native summary lifecycle events to subscribe to.
+
+The future server path can preserve the shared React workflow:
+
+```text
+React UI
+  -> SummaryClient
+  -> HttpSummaryClient
+  -> Voxa API / job system
+  -> summary worker
+```
+
+`SummaryCapabilities` represents local, remote or mixed execution, asynchronous
+jobs, polling, cancellation, templates, runtime preflight and the providers
+available through a transport. An HTTP adapter can therefore expose only
+server-approved providers, return remote job identifiers, poll server state and
+cancel jobs without browser access to llama.cpp or local model files.
+
+Ownership remains separated:
+
+- `SummaryClient` owns runtime execution and job/result lifecycle.
+- `TranscriptionClient` produces transcript content; it does not summarize it.
+- `MeetingClient` supplies persisted transcript pages consumed by summaries.
+- `MediaClient` owns recording/import media and playback, not summary content.
+- configuration owns saved provider, API key, endpoint, model, output language,
+  template preference and auto-summary defaults.
+- model management owns built-in model download, installation, deletion and
+  folder operations; only execution-time readiness crosses `SummaryClient`.
+

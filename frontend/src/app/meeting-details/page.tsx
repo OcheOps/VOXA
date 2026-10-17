@@ -1,7 +1,7 @@
 "use client"
 import { useSidebar } from "@/components/Sidebar/SidebarProvider";
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { MeetingSummary, SummaryProcessResponse, Transcript } from "@/types";
+import { MeetingSummary, Transcript } from "@/types";
 import PageContent from "./page-content";
 import { useRouter, useSearchParams } from "next/navigation";
 import Analytics from "@/lib/analytics";
@@ -10,6 +10,7 @@ import { LoaderIcon } from "lucide-react";
 import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
 import { parseSummaryContent } from "@/lib/summary-content";
+import { type SummaryState, useVoxaClient } from "@/clients";
 
 interface MeetingDetailsResponse {
   id: string;
@@ -20,6 +21,7 @@ interface MeetingDetailsResponse {
 }
 
 function MeetingDetailsContent() {
+  const { summaries: summaryClient } = useVoxaClient();
   const searchParams = useSearchParams();
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
@@ -27,7 +29,7 @@ function MeetingDetailsContent() {
   const { isAutoSummary } = useConfig(); // Get auto-summary toggle state
   const router = useRouter();
   const [meetingDetails, setMeetingDetails] = useState<MeetingDetailsResponse | null>(null);
-  const [summaryResponse, setSummaryResponse] = useState<SummaryProcessResponse | null>(null);
+  const [summaryResponse, setSummaryResponse] = useState<SummaryState | null>(null);
   const [meetingSummary, setMeetingSummary] = useState<MeetingSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -194,9 +196,7 @@ function MeetingDetailsContent() {
     let cancelled = false;
     const fetchMeetingSummary = async () => {
       try {
-        const response = await invoke<SummaryProcessResponse>('api_get_summary', {
-          meetingId,
-        });
+        const response = await summaryClient.getState(meetingId);
         if (cancelled) return;
         setSummaryResponse(response);
         const summary = parseSummaryContent(response.data);
@@ -218,7 +218,7 @@ function MeetingDetailsContent() {
 
     loadData();
     return () => { cancelled = true; };
-  }, [meetingId]);
+  }, [meetingId, summaryClient]);
 
   // Auto-generation check: runs when meeting is loaded with no summary
   useEffect(() => {

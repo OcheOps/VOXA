@@ -1,9 +1,6 @@
 import type {
-  CancelSummaryResponse,
   MeetingMetadata,
   PaginatedTranscriptsResponse,
-  ProcessTranscriptResponse,
-  SummaryProcessResponse,
   Transcript,
   TranscriptUpdate,
 } from '@/types';
@@ -288,11 +285,80 @@ export interface TranscriptionError {
 }
 
 export interface SummaryClient {
-  get(meetingId: string): Promise<SummaryProcessResponse>;
-  process(input: Record<string, unknown>): Promise<ProcessTranscriptResponse>;
-  cancel(meetingId: string, processId?: string): Promise<CancelSummaryResponse>;
+  readonly capabilities: SummaryCapabilities;
+  getState(meetingId: string): Promise<SummaryState>;
+  generate(request: SummaryRequest): Promise<SummaryGenerationResult>;
+  cancel(meetingId: string, processId: string): Promise<SummaryCancellationResult>;
   save(meetingId: string, summary: unknown): Promise<void>;
+  listTemplates(): Promise<SummaryTemplate[]>;
+  checkRuntime(input: SummaryRuntimeInput): Promise<SummaryRuntimeReadiness>;
 }
+
+export type SummaryProvider =
+  | 'builtin-ai'
+  | 'ollama'
+  | 'openai'
+  | 'claude'
+  | 'groq'
+  | 'openrouter'
+  | 'custom-openai';
+
+export interface SummaryCapabilities {
+  execution: 'local' | 'remote' | 'local-and-remote';
+  asynchronousJobs: boolean;
+  polling: boolean;
+  cancellation: boolean;
+  templates: boolean;
+  localRuntimePreflight: boolean;
+  providers: SummaryProvider[];
+}
+
+export type SummaryStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'error'
+  | 'idle';
+
+export interface SummaryState {
+  status: SummaryStatus;
+  meetingName: string | null;
+  meetingId: string;
+  processId: string | null;
+  endedAt: string | null;
+  data: unknown | null;
+  error: string | null;
+}
+
+export interface SummaryRequest {
+  text: string;
+  provider: SummaryProvider;
+  modelName: string;
+  meetingId: string;
+  chunkSize: number;
+  overlap: number;
+  customPrompt: string;
+  templateId: string;
+  summaryLanguage: string | null;
+}
+
+export interface SummaryGenerationResult { message: string; processId: string; }
+export interface SummaryCancellationResult {
+  cancelled: boolean;
+  message: string;
+  meetingId: string;
+}
+export interface SummaryTemplate { id: string; name: string; description: string; }
+export interface SummaryRuntimeInput {
+  provider: SummaryProvider;
+  modelName: string;
+  ollamaEndpoint: string | null;
+}
+export type SummaryRuntimeReadiness =
+  | { ready: true }
+  | { ready: false; reason: 'no-model-selected' | 'no-models-available' | 'model-not-ready' };
 
 export interface MediaClient {
   readonly capabilities: MediaCapabilities;
