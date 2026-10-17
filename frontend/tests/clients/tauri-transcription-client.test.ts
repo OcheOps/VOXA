@@ -71,6 +71,13 @@ describe('TauriTranscriptionClient commands', () => {
     ]);
   });
 
+  test('keeps live language synchronization in the runtime client', async () => {
+    await new TauriTranscriptionClient().setLanguage('fr');
+    expect(calls).toEqual([
+      { command: 'set_language_preference', args: { language: 'fr' } },
+    ]);
+  });
+
   test('preserves existing-audio transcription command payloads', async () => {
     const client = new TauriTranscriptionClient();
 

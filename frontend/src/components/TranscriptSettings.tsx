@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -7,6 +6,7 @@ import { Label } from './ui/label';
 import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
+import { useVoxaClient } from '@/clients';
 
 
 export interface TranscriptModelProps {
@@ -22,6 +22,7 @@ export interface TranscriptSettingsProps {
 }
 
 export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelConfig, onModelSelect }: TranscriptSettingsProps) {
+    const { configuration: configurationClient } = useVoxaClient();
     const [apiKey, setApiKey] = useState<string | null>(transcriptModelConfig.apiKey || null);
     const [showApiKey, setShowApiKey] = useState<boolean>(false);
     const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(true);
@@ -42,7 +43,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const fetchApiKey = async (provider: string) => {
         try {
 
-            const data = await invoke('api_get_transcript_api_key', { provider }) as string;
+            const data = await configurationClient.getTranscriptionApiKey(provider);
 
             setApiKey(data || '');
         } catch (err) {

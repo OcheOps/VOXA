@@ -5,7 +5,6 @@ import { MeetingSummary } from '@/types';
 import type { SummaryState } from '@/clients';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
-import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
@@ -19,6 +18,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useVoxaClient } from '@/clients';
 
 export default function PageContent({
   meeting,
@@ -51,6 +51,7 @@ export default function PageContent({
   loadedCount?: number;
   onLoadMore?: () => void;
 }) {
+  const { configuration: configurationClient } = useVoxaClient();
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
@@ -98,7 +99,7 @@ export default function PageContent({
   const handleSaveModelConfig = async (config?: ModelConfig) => {
     if (!config) return;
     try {
-      await invoke('api_save_model_config', {
+      await configurationClient.saveSummaryPreferences({
         provider: config.provider,
         model: config.model,
         whisperModel: config.whisperModel,

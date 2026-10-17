@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
 import { TranscriptSettings } from '@/components/TranscriptSettings';
 import { RecordingSettings } from '@/components/RecordingSettings';
@@ -12,6 +11,7 @@ import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useVoxaClient } from '@/clients';
 
 // Tabs configuration (constant)
 const TABS = [
@@ -25,6 +25,7 @@ const TABS = [
 export default function SettingsPage() {
   const router = useRouter();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
+  const { configuration: configurationClient } = useVoxaClient();
 
   // Animation state for tabs
   const [activeTab, setActiveTab] = useState('general');
@@ -35,7 +36,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
-        const config = await invoke('api_get_transcript_config') as any;
+        const config = await configurationClient.getTranscriptionPreferences();
         if (config) {
           console.log('Loaded saved transcript config:', config);
           setTranscriptModelConfig({
@@ -49,7 +50,7 @@ export default function SettingsPage() {
       }
     };
     loadTranscriptConfig();
-  }, [setTranscriptModelConfig]);
+  }, [configurationClient, setTranscriptModelConfig]);
 
   // Update underline position when active tab changes
   useLayoutEffect(() => {

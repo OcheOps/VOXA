@@ -21,7 +21,7 @@ interface MeetingDetailsResponse {
 }
 
 function MeetingDetailsContent() {
-  const { summaries: summaryClient } = useVoxaClient();
+  const { summaries: summaryClient, configuration: configurationClient } = useVoxaClient();
   const searchParams = useSearchParams();
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
@@ -84,7 +84,7 @@ function MeetingDetailsContent() {
 
     try {
       // Check what's currently in database
-      const currentConfig = await invoke('api_get_model_config') as any;
+      const currentConfig = await configurationClient.getSummaryPreferences();
 
       // If DB already has a model, use it (never override!)
       if (currentConfig && currentConfig.model) {
@@ -100,7 +100,7 @@ function MeetingDetailsContent() {
       if (hasGemma) {
         console.log('💾 DB empty, using gemma3:1b as initial default');
 
-        await invoke('api_save_model_config', {
+        await configurationClient.saveSummaryPreferences({
           provider: 'ollama',
           model: 'gemma3:1b',
           whisperModel: 'large-v3',
@@ -117,7 +117,7 @@ function MeetingDetailsContent() {
     }
 
     setHasCheckedAutoGen(true);
-  }, [hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary]);
+  }, [configurationClient, hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary]);
 
   // Sync meeting metadata from pagination hook to meeting details state
   useEffect(() => {

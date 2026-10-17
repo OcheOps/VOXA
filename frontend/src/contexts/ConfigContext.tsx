@@ -3,10 +3,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode, useRef } from 'react';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SelectedDevices } from '@/components/DeviceSelection';
-import { configService, ModelConfig } from '@/services/configService';
+import type { NotificationPreferences as NotificationSettings, SummaryPreferences as ModelConfig } from '@/clients';
 import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
 import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
+import { useVoxaClient } from '@/clients';
 
 export interface OllamaModel {
   name: string;
@@ -21,26 +22,7 @@ export interface StorageLocations {
   recordings: string;
 }
 
-export interface NotificationSettings {
-  recording_notifications: boolean;
-  time_based_reminders: boolean;
-  meeting_reminders: boolean;
-  respect_do_not_disturb: boolean;
-  notification_sound: boolean;
-  system_permission_granted: boolean;
-  consent_given: boolean;
-  manual_dnd_mode: boolean;
-  notification_preferences: {
-    show_recording_started: boolean;
-    show_recording_stopped: boolean;
-    show_recording_paused: boolean;
-    show_recording_resumed: boolean;
-    show_transcription_complete: boolean;
-    show_meeting_reminders: boolean;
-    show_system_errors: boolean;
-    meeting_reminder_minutes: number[];
-  };
-}
+export type { NotificationPreferences as NotificationSettings } from '@/clients';
 
 interface ConfigContextType {
   // Model configuration
@@ -98,6 +80,7 @@ const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
 
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
+  const { configuration: configurationClient, transcription: transcriptionClient } = useVoxaClient();
   // Model configuration state
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
@@ -140,13 +123,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   });
 
   // Language preference state
-  const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('primaryLanguage');
-      return saved || 'auto';
-    }
-    return 'auto';
-  });
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('auto');
 
   // UI preferences state
   const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(() => {
@@ -158,13 +135,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   });
 
   // Summary configs
-  const [isAutoSummary, setisAutoSummary] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('isAutoSummary');
-      return saved !== null ? saved === 'true' : false
-    }
-    return false;
-  });
+  const [isAutoSummary, setisAutoSummary] = useState<boolean>(false);
+
+  useEffect(() => {
+    configurationClient.getTranscriptionLanguage().then(setSelectedLanguage).catch(error =>
+      console.error('[ConfigContext] Failed to load language preference:', error)
+    );
+    configurationClient.getAutoSummaryEnabled().then(setisAutoSummary).catch(error =>
+      console.error('[ConfigContext] Failed to load auto-summary preference:', error)
+    );
+  }, [configurationClient]);
 
   // Beta features state (localStorage)
   const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>(() => {
@@ -198,7 +178,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
-        const config = await configService.getTranscriptConfig();
+        const config = await configurationClient.getTranscriptionPreferences();
         if (config) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
           setTranscriptModelConfig({
@@ -212,12 +192,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
     };
     loadTranscriptConfig();
-  }, []);
+  }, [configurationClient]);
 
   // Sync language preference to Rust on mount (fixes startup desync bug)
   useEffect(() => {
     if (selectedLanguage) {
-      invoke('set_language_preference', { language: selectedLanguage })
+      transcriptionClient.setLanguage(selectedLanguage)
         .then(() => {
           console.log('[ConfigContext] Synced language preference to Rust on startup:', selectedLanguage);
         })
@@ -225,18 +205,18 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           console.error('[ConfigContext] Failed to sync language preference to Rust on startup:', err);
         });
     }
-  }, []); 
+  }, [selectedLanguage, transcriptionClient]);
 
   // Load model configuration on mount
   useEffect(() => {
     const fetchModelConfig = async () => {
       try {
-        const data = await configService.getModelConfig();
+        const data = await configurationClient.getSummaryPreferences();
         if (data && data.provider) {
           // If provider is custom-openai, fetch the additional config
           if (data.provider === 'custom-openai') {
             try {
-              const customConfig = await configService.getCustomOpenAIConfig();
+              const customConfig = await configurationClient.getCustomOpenAIConfiguration();
               if (customConfig) {
                 // Merge custom config fields into modelConfig
                 console.log('[ConfigContext] Loading custom OpenAI config:', {
@@ -294,7 +274,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
     };
     fetchModelConfig();
-  }, []);
+  }, [configurationClient]);
 
   // Load all provider API keys on mount
   useEffect(() => {
@@ -303,7 +283,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         const providers = ['claude', 'groq', 'openai', 'openrouter'];
         const keys = await Promise.all(
           providers.map(p =>
-            invoke<string>('api_get_api_key', { provider: p })
+            configurationClient.getSummaryApiKey(p)
               .catch(() => null) // Gracefully handle missing keys
           )
         );
@@ -321,7 +301,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     };
 
     loadAllApiKeys();
-  }, []);
+  }, [configurationClient]);
 
   // Listen for model config updates from other components
   useEffect(() => {
@@ -351,11 +331,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const loadDevicePreferences = async () => {
       try {
-        const prefs = await configService.getRecordingPreferences();
-        if (prefs && (prefs.preferred_mic_device || prefs.preferred_system_device)) {
+        const prefs = await configurationClient.getRecordingPreferences();
+        if (prefs && (prefs.preferredMicrophoneDevice || prefs.preferredSystemAudioDevice)) {
           setSelectedDevices({
-            micDevice: prefs.preferred_mic_device,
-            systemDevice: prefs.preferred_system_device
+            micDevice: prefs.preferredMicrophoneDevice,
+            systemDevice: prefs.preferredSystemAudioDevice
           });
           console.log('Loaded device preferences:', prefs);
         }
@@ -364,7 +344,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
     };
     loadDevicePreferences();
-  }, []);
+  }, [configurationClient]);
 
   // Calculate model options based on available models
   const modelOptions: Record<ModelConfig['provider'], string[]> = {
@@ -389,10 +369,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const toggleIsAutoSummary = useCallback((checked: boolean) => {
     setisAutoSummary(checked);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('isAutoSummary', checked.toString());
-    }
-  }, [])
+    configurationClient.setAutoSummaryEnabled(checked).catch(error =>
+      console.error('[ConfigContext] Failed to save auto-summary preference:', error)
+    );
+  }, [configurationClient])
 
   // Toggle beta feature with localStorage persistence and analytics
   const toggleBetaFeature = useCallback((featureKey: BetaFeatureKey, enabled: boolean) => {
@@ -433,7 +413,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // Load notification settings from backend
       let settings: NotificationSettings | null = null;
       try {
-        settings = await invoke<NotificationSettings>('get_notification_settings');
+        settings = await configurationClient.getNotificationPreferences();
         setNotificationSettings(settings);
       } catch (notifError) {
         console.error('[ConfigContext] Failed to load notification settings:', notifError);
@@ -445,7 +425,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       const [dbDir, modelsDir, recordingsDir] = await Promise.all([
         invoke<string>('get_database_directory'),
         invoke<string>('whisper_get_models_directory'),
-        invoke<string>('get_default_recordings_folder_path')
+        configurationClient.getDefaultRecordingsFolder()
       ]);
 
       setStorageLocations({
@@ -462,30 +442,30 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       isLoadingRef.current = false;
       setIsLoadingPreferences(false);
     }
-  }, []);
+  }, [configurationClient]);
 
   // Update notification settings
   const updateNotificationSettings = useCallback(async (settings: NotificationSettings) => {
     try {
-      await invoke('set_notification_settings', { settings });
+      await configurationClient.saveNotificationPreferences(settings);
       setNotificationSettings(settings);
     } catch (error) {
       console.error('[ConfigContext] Failed to update notification settings:', error);
       throw error; // Re-throw so component can handle error
     }
-  }, []);
+  }, [configurationClient]);
 
   // Wrapper for setSelectedLanguage that persists to localStorage and syncs to Rust
   const handleSetSelectedLanguage = useCallback((lang: string) => {
     setSelectedLanguage(lang);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('primaryLanguage', lang);
-    }
+    configurationClient.saveTranscriptionLanguage(lang).catch(err =>
+      console.error('Failed to save language preference:', err)
+    );
     // Sync with Rust in-memory state for live recording
-    invoke('set_language_preference', { language: lang }).catch(err =>
+    transcriptionClient.setLanguage(lang).catch(err =>
       console.error('Failed to sync language preference to Rust:', err)
     );
-  }, []);
+  }, [configurationClient, transcriptionClient]);
 
   const value: ConfigContextType = useMemo(() => ({
     modelConfig,

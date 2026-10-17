@@ -41,7 +41,7 @@ interface SidebarItem {
 }
 
 const Sidebar: React.FC = () => {
-  const { meetings: meetingClient } = useVoxaClient();
+  const { meetings: meetingClient, configuration: configurationClient } = useVoxaClient();
   const router = useRouter();
   const pathname = usePathname();
   const {
@@ -117,14 +117,12 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const data = await invoke('api_get_model_config') as any;
+        const data = await configurationClient.getSummaryPreferences();
         if (data && data.provider !== null) {
           // Fetch API key if not included and provider requires it
           if (data.provider !== 'ollama' && !data.apiKey) {
             try {
-              const apiKeyData = await invoke('api_get_api_key', {
-                provider: data.provider
-              }) as string;
+              const apiKeyData = await configurationClient.getSummaryApiKey(data.provider);
               data.apiKey = apiKeyData;
             } catch (err) {
               console.error('Failed to fetch API key:', err);
@@ -138,7 +136,7 @@ const Sidebar: React.FC = () => {
     };
 
     fetchModelConfig();
-  }, [serverAddress]);
+  }, [configurationClient, serverAddress]);
 
 
   useEffect(() => {
@@ -151,7 +149,7 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const data = await invoke('api_get_transcript_config') as any;
+        const data = await configurationClient.getTranscriptionPreferences();
         if (data && data.provider !== null) {
           setTranscriptModelConfig(data);
         }
@@ -160,7 +158,7 @@ const Sidebar: React.FC = () => {
       }
     };
     fetchTranscriptSettings();
-  }, [serverAddress]);
+  }, [configurationClient, serverAddress]);
 
   // Listen for model config updates from other components
   useEffect(() => {
@@ -187,7 +185,7 @@ const Sidebar: React.FC = () => {
   // Handle model config save
   const handleSaveModelConfig = async (config: ModelConfig) => {
     try {
-      await invoke('api_save_model_config', {
+      await configurationClient.saveSummaryPreferences({
         provider: config.provider,
         model: config.model,
         whisperModel: config.whisperModel,
@@ -221,7 +219,7 @@ const Sidebar: React.FC = () => {
       };
       console.log('Saving transcript config with payload:', payload);
 
-      await invoke('api_save_transcript_config', {
+      await configurationClient.saveTranscriptionPreferences({
         provider: payload.provider,
         model: payload.model,
         apiKey: payload.apiKey,

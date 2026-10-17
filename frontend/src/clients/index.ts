@@ -7,6 +7,7 @@ import { TauriMeetingClient } from './tauri/meeting-client';
 import { TauriRecordingClient } from './tauri/recording-client';
 import { TauriSummaryClient } from './tauri/summary-client';
 import { TauriTranscriptionClient } from './tauri/transcription-client';
+import { TauriConfigurationClient } from './tauri/configuration-client';
 
 export type * from './contracts';
 
@@ -16,6 +17,7 @@ export const voxaClient: VoxaClient = {
   transcription: new TauriTranscriptionClient(),
   summaries: new TauriSummaryClient(),
   media: new TauriMediaClient(),
+  configuration: new TauriConfigurationClient(),
 };
 
 const VoxaClientContext = createContext<VoxaClient>(voxaClient);

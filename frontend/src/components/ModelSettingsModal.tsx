@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/command';
 import { cn, isOllamaNotInstalledError } from '@/lib/utils';
 import { toast } from 'sonner';
+import { useVoxaClient } from '@/clients';
 
 export interface ModelConfig {
   provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
@@ -116,6 +117,7 @@ export function ModelSettingsModal({
   skipInitialFetch = false,
   layout = 'inline',
 }: ModelSettingsModalProps) {
+  const { configuration: configurationClient } = useVoxaClient();
   // Use ConfigContext if available, fallback to props for backward compatibility
   const configContext = useConfig();
   const modelConfig = configContext?.modelConfig || propsModelConfig;
@@ -205,9 +207,7 @@ export function ModelSettingsModal({
 
   const fetchApiKey = async (provider: string) => {
     try {
-      const data = (await invoke('api_get_api_key', {
-        provider,
-      })) as string;
+      const data = await configurationClient.getSummaryApiKey(provider);
       setApiKey(data || '');
     } catch (err) {
       console.error('Error fetching API key:', err);
@@ -263,16 +263,14 @@ export function ModelSettingsModal({
       }
 
       try {
-        const data = (await invoke('api_get_model_config')) as any;
+        const data = await configurationClient.getSummaryPreferences() as any;
         if (data && data.provider !== null) {
           setModelConfig(data);
 
           // Fetch API key if not included in response and provider requires it
           if (data.provider !== 'ollama' && !data.apiKey) {
             try {
-              const apiKeyData = await invoke('api_get_api_key', {
-                provider: data.provider
-              }) as string;
+              const apiKeyData = await configurationClient.getSummaryApiKey(data.provider);
               data.apiKey = apiKeyData;
               setApiKey(apiKeyData);
             } catch (err) {
@@ -290,7 +288,7 @@ export function ModelSettingsModal({
           // Fetch Custom OpenAI config if that's the active provider
           if (data.provider === 'custom-openai') {
             try {
-              const customConfig = (await invoke('api_get_custom_openai_config')) as any;
+              const customConfig = await configurationClient.getCustomOpenAIConfiguration();
               if (customConfig) {
                 setCustomOpenAIEndpoint(customConfig.endpoint || '');
                 setCustomOpenAIModel(customConfig.model || '');
@@ -618,7 +616,7 @@ export function ModelSettingsModal({
     // For custom-openai provider, save the custom config first
     if (modelConfig.provider === 'custom-openai') {
       try {
-        await invoke('api_save_custom_openai_config', {
+        await configurationClient.saveCustomOpenAIConfiguration({
           endpoint: customOpenAIEndpoint.trim(),
           apiKey: customOpenAIApiKey.trim() || null,
           model: customOpenAIModel.trim(),
@@ -855,7 +853,7 @@ export function ModelSettingsModal({
 
                 // Load custom OpenAI config when selected
                 if (provider === 'custom-openai') {
-                  invoke<any>('api_get_custom_openai_config').then((config) => {
+                  configurationClient.getCustomOpenAIConfiguration().then((config) => {
                     if (config) {
                       setCustomOpenAIEndpoint(config.endpoint || '');
                       setCustomOpenAIModel(config.model || '');

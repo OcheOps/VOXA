@@ -1,9 +1,10 @@
 # Remaining frontend Tauri coupling
 
-After the meeting, recording, active transcription, media and summary slices, 50 frontend
-source files import a Tauri API directly. Six are intentional adapter-layer
-files under `src/clients/tauri/` (including the shared subscription helper);
-the other 44 are future migration inventory.
+After the meeting, recording, transcription, media, summary and configuration
+slices, 47 frontend source files import a Tauri API directly. Seven are
+intentional adapter-layer files under `src/clients/tauri/` (including the shared
+subscription helper); the other 40 belong to explicit native boundaries or
+smaller future cleanup candidates.
 
 ## Successfully migrated recording files
 
@@ -87,13 +88,31 @@ template and runtime-preflight command names plus snake_case result mapping.
 There are no active summary lifecycle Tauri events; the native workflow uses
 polling.
 
-## Intentional adapter imports (6)
+## Successfully migrated configuration files
+
+Persistent transcription, summary, credential, recording/storage and recording
+notification preferences now cross `ConfigurationClient`. Native command names,
+payload casing, the `preferences.json` store name and its
+`show_recording_notification` key live in `TauriConfigurationClient`.
+
+The main migrated consumers are `ConfigContext.tsx`, `RecordingSettings.tsx`,
+`TranscriptSettings.tsx`, both transcription model managers, summary model
+settings/modal/sidebar, settings page, meeting detail default setup and
+`useModelConfiguration.ts`. The duplicate Tauri-backed `configService.ts` was
+removed.
+
+Local UI preferences (`showConfidenceIndicator`, beta flags, recent-language
+MRU and provider model UI cache) remain browser-safe `localStorage` helpers.
+Per-meeting summary-language metadata remains a meeting persistence concern.
+
+## Intentional adapter imports (7)
 
 - `src/clients/tauri/meeting-client.ts`
 - `src/clients/tauri/recording-client.ts`
 - `src/clients/tauri/media-client.ts`
 - `src/clients/tauri/summary-client.ts`
 - `src/clients/tauri/transcription-client.ts`
+- `src/clients/tauri/configuration-client.ts`
 - `src/clients/tauri/subscribe.ts`
 
 `TauriRecordingClient` is now the only module that knows recording command
@@ -106,14 +125,14 @@ desktop recording save path.
   event and intentionally remains at the application-shell boundary.
 - `src/hooks/useRecordingStop.ts`: uses the Tauri store plugin for an analytics
   preference; stop and transcription-complete events are client-backed.
-- `src/components/RecordingSettings.tsx` and `src/contexts/ConfigContext.tsx`:
-  recording preferences, default-folder lookup and configuration persistence were
-  deliberately excluded from the active recording transport slice.
+- `src/components/RecordingSettings.tsx` and `src/contexts/ConfigContext.tsx`
+  now use `ConfigurationClient` for recording preferences and default-folder
+  lookup.
 - `src/components/AudioBackendSelector.tsx`, `BluetoothPlaybackWarning.tsx`,
   `PermissionWarning.tsx`, and onboarding `PermissionsStep.tsx`: native backend,
   playback-device and OS permission UI remain platform configuration concerns.
-- `src/components/PreferenceSettings.tsx`: retains database/models folder
-  actions and notification preferences; recordings-folder opening is client-backed.
+- `src/components/PreferenceSettings.tsx`: notification preferences are
+  client-backed; database/models folder actions remain native shell/model concerns.
 - `src/lib/recordingNotification.tsx`: desktop notification integration.
 - `src/lib/analytics.ts`: native analytics command forwarding.
 
@@ -127,14 +146,15 @@ microphone hot-swap UI paths invoke or listen to Tauri directly.
   management adapters used by the two native model-manager components. Their
   model load/download/cancel/delete and models-folder operations are not yet
   generalized because their UI metadata and cancellation behavior differ.
-- `WhisperModelManager.tsx` and `ParakeetModelManager.tsx` still invoke
-  `api_save_transcript_config`; this is persistent preference ownership, not
-  runtime transcription. Their model progress events are client-backed.
+- `WhisperModelManager.tsx` and `ParakeetModelManager.tsx` save selected defaults
+  through `ConfigurationClient`; their model lifecycle remains model-management
+  code and their progress events are transcription-client-backed.
 - `OnboardingContext.tsx` and `DownloadProgressStep.tsx` retain Parakeet
   download/retry commands and unrelated database/summary-model commands.
   Provider initialization, readiness, and model events are client-backed.
-- `ConfigContext.tsx`, settings and sidebar retain transcript configuration,
-  language preference and native models-folder persistence/UI operations.
+- `ConfigContext.tsx`, settings and sidebar use `ConfigurationClient` for saved
+  transcript configuration. Live language synchronization remains correctly in
+  `TranscriptionClient`; models-folder UI remains native model management.
 - `useImportAudio.ts` uses `MediaClient` for file selection/validation and
   `TranscriptionClient` for starting, cancelling and observing the ASR job.
 - `useTranscriptRecovery.ts` retains checkpoint inspection/recovery commands,
@@ -162,12 +182,13 @@ Tauri adapter can unwrap a `MediaSource` to its native reference.
 
 ## Remaining summary-specific coupling
 
-- `ModelSettingsModal.tsx`, `SummaryModelSettings.tsx`, `Sidebar/index.tsx`,
-  `page-content.tsx`, `ConfigContext.tsx` and `configService.ts` retain saved
-  provider, endpoint, API-key, default-model and auto-summary configuration.
-- `page.tsx` retains initial default-model selection and persistence for the
-  auto-summary preference path. Active generation and state restoration are
-  client-backed.
+- The settings components still import Tauri for provider model discovery,
+  model lifecycle, and the existing cross-window `model-config-updated` shell
+  event. Saved provider, endpoint, API-key and model calls are client-backed.
+- `ModelSettingsModal.tsx` retains the legacy auto-generate command probe; the
+  command is not registered in the active Rust command table and its existing
+  error/default behavior is intentionally unchanged. The active auto-summary
+  preference remains the browser-safe `ConfigContext` local preference.
 - `lib/summary-language-preferences.ts` owns per-meeting/default output-language
   persistence and language detection metadata, not summary job execution.
 - `lib/builtin-ai.ts`, `BuiltInModelManager.tsx`, onboarding and download UI
@@ -180,18 +201,18 @@ No React consumer knows `api_process_transcript`, `api_get_summary`,
 
 ## Remaining files by area
 
-The 50 direct-import files comprise:
+The 47 direct-import files comprise:
 
-- 6 transport-adapter files
-- 4 app/page files
-- 24 components
+- 7 transport-adapter files
+- 3 app/page files
+- 22 components
 - 3 contexts
 - 5 hooks
 - 6 libraries
-- 2 services
+- 1 service
 
 The largest remaining areas are model management, onboarding/permissions,
-configuration, analytics, updates and
+analytics, updates, recovery and
 desktop-shell integration. Future work should migrate one
 capability slice at a time rather than mechanically remove imports.
 

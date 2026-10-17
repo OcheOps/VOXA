@@ -25,7 +25,7 @@ export function ParakeetModelManager({
   className = '',
   autoSave = false
 }: ParakeetModelManagerProps) {
-  const { transcription: transcriptionClient } = useVoxaClient();
+  const { transcription: transcriptionClient, configuration: configurationClient } = useVoxaClient();
   const [models, setModels] = useState<ParakeetModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -229,7 +229,7 @@ export function ParakeetModelManager({
 
   const saveModelSelection = async (modelName: string) => {
     try {
-      await invoke('api_save_transcript_config', {
+      await configurationClient.saveTranscriptionPreferences({
         provider: 'parakeet',
         model: modelName,
         apiKey: null

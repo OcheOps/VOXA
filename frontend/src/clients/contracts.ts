@@ -133,6 +133,7 @@ export interface TranscriptionClient {
   getSelectedProvider(): Promise<TranscriptionProvider>;
   ensureReady(): Promise<boolean>;
   initializeProvider(provider: TranscriptionProvider): Promise<void>;
+  setLanguage(language: string): Promise<void>;
   hasAvailableModels(provider: TranscriptionProvider): Promise<boolean>;
   listModels(provider: TranscriptionProvider): Promise<TranscriptionModel[]>;
   getHistory(): Promise<Transcript[]>;
@@ -397,10 +398,104 @@ export interface MediaImportSelection {
   format: string;
 }
 
+export type SummaryPreferenceProvider = SummaryProvider;
+
+export interface TranscriptionPreferences {
+  provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+  model: string;
+  apiKey: string | null;
+}
+
+export interface SummaryPreferences {
+  provider: SummaryPreferenceProvider;
+  model: string;
+  whisperModel: string;
+  apiKey?: string | null;
+  ollamaEndpoint?: string | null;
+  customOpenAIDisplayName?: string | null;
+  customOpenAIEndpoint?: string | null;
+  customOpenAIModel?: string | null;
+  customOpenAIApiKey?: string | null;
+  maxTokens?: number | null;
+  temperature?: number | null;
+  topP?: number | null;
+}
+
+export interface CustomOpenAIConfiguration {
+  displayName?: string | null;
+  endpoint: string;
+  apiKey: string | null;
+  model: string;
+  maxTokens: number | null;
+  temperature: number | null;
+  topP: number | null;
+}
+
+export interface RecordingPreferences {
+  saveFolder: string;
+  autoSave: boolean;
+  fileFormat: string;
+  preferredMicrophoneDevice: string | null;
+  preferredSystemAudioDevice: string | null;
+  systemAudioBackend?: string | null;
+}
+
+export interface ConfigurationCapabilities {
+  remoteCredentialStorage: boolean;
+  desktopStorageLocations: boolean;
+  recordingDeviceDefaults: boolean;
+  nativeNotificationPreferences: boolean;
+}
+
+export interface NotificationPreferences {
+  recordingNotifications: boolean;
+  timeBasedReminders: boolean;
+  meetingReminders: boolean;
+  respectDoNotDisturb: boolean;
+  notificationSound: boolean;
+  systemPermissionGranted: boolean;
+  consentGiven: boolean;
+  manualDndMode: boolean;
+  notifications: {
+    showRecordingStarted: boolean;
+    showRecordingStopped: boolean;
+    showRecordingPaused: boolean;
+    showRecordingResumed: boolean;
+    showTranscriptionComplete: boolean;
+    showMeetingReminders: boolean;
+    showSystemErrors: boolean;
+    meetingReminderMinutes: number[];
+  };
+}
+
+export interface ConfigurationClient {
+  readonly capabilities: ConfigurationCapabilities;
+  getTranscriptionPreferences(): Promise<TranscriptionPreferences>;
+  saveTranscriptionPreferences(preferences: TranscriptionPreferences): Promise<void>;
+  getTranscriptionApiKey(provider: string): Promise<string>;
+  getTranscriptionLanguage(): Promise<string>;
+  saveTranscriptionLanguage(language: string): Promise<void>;
+  getSummaryPreferences(): Promise<SummaryPreferences | null>;
+  saveSummaryPreferences(preferences: SummaryPreferences): Promise<void>;
+  getSummaryApiKey(provider: string): Promise<string>;
+  getCustomOpenAIConfiguration(): Promise<CustomOpenAIConfiguration | null>;
+  saveCustomOpenAIConfiguration(configuration: CustomOpenAIConfiguration): Promise<void>;
+  getAutoSummaryEnabled(): Promise<boolean>;
+  setAutoSummaryEnabled(enabled: boolean): Promise<void>;
+  getRecordingPreferences(): Promise<RecordingPreferences>;
+  saveRecordingPreferences(preferences: RecordingPreferences): Promise<void>;
+  getDefaultRecordingsFolder(): Promise<string>;
+  getRecordingNotificationEnabled(): Promise<boolean>;
+  setRecordingNotificationEnabled(enabled: boolean): Promise<void>;
+  getNotificationPreferences(): Promise<NotificationPreferences>;
+  saveNotificationPreferences(preferences: NotificationPreferences): Promise<void>;
+}
+
 export interface VoxaClient {
   meetings: MeetingClient;
   recording: RecordingClient;
   transcription: TranscriptionClient;
   summaries: SummaryClient;
   media: MediaClient;
+  configuration: ConfigurationClient;
 }

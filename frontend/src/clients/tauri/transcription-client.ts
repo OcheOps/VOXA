@@ -107,6 +107,10 @@ export class TauriTranscriptionClient implements TranscriptionClient {
     return invoke(PROVIDER_COMMANDS[provider].initialize);
   }
 
+  async setLanguage(language: string): Promise<void> {
+    await invoke('set_language_preference', { language });
+  }
+
   hasAvailableModels(provider: TranscriptionProvider): Promise<boolean> {
     return invoke(PROVIDER_COMMANDS[provider].hasAvailableModels);
   }

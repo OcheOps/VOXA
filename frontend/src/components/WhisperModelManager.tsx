@@ -28,7 +28,7 @@ export function ModelManager({
   className = '',
   autoSave = false
 }: ModelManagerProps) {
-  const { transcription: transcriptionClient } = useVoxaClient();
+  const { transcription: transcriptionClient, configuration: configurationClient } = useVoxaClient();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -303,7 +303,7 @@ export function ModelManager({
 
   const saveModelSelection = async (modelName: string) => {
     try {
-      await invoke('api_save_transcript_config', {
+      await configurationClient.saveTranscriptionPreferences({
         provider: 'localWhisper',
         model: modelName,
         apiKey: null

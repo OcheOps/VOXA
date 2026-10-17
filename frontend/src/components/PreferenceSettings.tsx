@@ -39,7 +39,7 @@ export function PreferenceSettings() {
       // Wait for notification settings to be available (either from cache or after loading)
       if (notificationSettings) {
         await Analytics.track('preferences_viewed', {
-          notifications_enabled: notificationSettings.notification_preferences.show_recording_started ? 'true' : 'false'
+          notifications_enabled: notificationSettings.notifications.showRecordingStarted ? 'true' : 'false'
         });
         hasTrackedViewRef.current = true;
       } else if (!isLoadingPreferences) {
@@ -59,8 +59,8 @@ export function PreferenceSettings() {
     if (notificationSettings) {
       // Notification enabled means both started and stopped notifications are enabled
       const enabled =
-        notificationSettings.notification_preferences.show_recording_started &&
-        notificationSettings.notification_preferences.show_recording_stopped;
+        notificationSettings.notifications.showRecordingStarted &&
+        notificationSettings.notifications.showRecordingStopped;
       setNotificationsEnabled(enabled);
       if (isInitialLoad) {
         setPreviousNotificationsEnabled(enabled);
@@ -88,10 +88,10 @@ export function PreferenceSettings() {
         // Update the notification preferences
         const updatedSettings: NotificationSettings = {
           ...notificationSettings,
-          notification_preferences: {
-            ...notificationSettings.notification_preferences,
-            show_recording_started: notificationsEnabled,
-            show_recording_stopped: notificationsEnabled,
+          notifications: {
+            ...notificationSettings.notifications,
+            showRecordingStarted: notificationsEnabled,
+            showRecordingStopped: notificationsEnabled,
           }
         };
 

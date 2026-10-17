@@ -301,3 +301,54 @@ Ownership remains separated:
 - model management owns built-in model download, installation, deletion and
   folder operations; only execution-time readiness crosses `SummaryClient`.
 
+## Configuration boundary
+
+The desktop configuration path is now:
+
+```text
+React UI
+  -> ConfigurationClient
+  -> TauriConfigurationClient
+  -> existing native database / preferences store
+```
+
+`ConfigurationClient` owns persisted transcription and summary defaults,
+provider credentials/endpoints, recording/storage defaults, and notification
+preferences. Its capability description states that the desktop adapter has
+desktop storage locations, device defaults and native notification preferences,
+but does not claim remote credential storage. Existing API keys remain in the
+same native persistence unchanged; this task does not encrypt, mask, rotate or
+migrate them.
+
+The future server path is:
+
+```text
+React UI
+  -> ConfigurationClient
+  -> HttpConfigurationClient
+  -> Voxa API
+  -> user/workspace settings + encrypted credential storage
+```
+
+An HTTP adapter can retain the intent-level methods while resolving effective
+values from per-user preferences, workspace defaults and server-controlled
+capabilities. Server Voxa must use encrypted credential storage or an external
+secret manager; React must not learn its storage mechanics. Desktop-only
+settings can be disabled through capabilities instead of being fabricated.
+
+Final frontend ownership is:
+
+- `MeetingClient`: meeting lifecycle and data.
+- `RecordingClient`: capture lifecycle and devices.
+- `TranscriptionClient`: ASR readiness and runtime execution.
+- `MediaClient`: playback, import and media access.
+- `SummaryClient`: summary execution and job lifecycle.
+- `ConfigurationClient`: persisted defaults, preferences and credentials.
+- desktop shell: updater, drag/drop, windows/tray, notifications and OS events.
+- model management: installation, download, cancellation, deletion and folders.
+
+`TranscriptionClient.getSelectedProvider()` still reads the native transcript
+configuration inside its adapter because runtime readiness needs the effective
+provider. This is intentional adapter-to-native overlap; React preference
+screens use `ConfigurationClient` and no longer know that command name.
+
