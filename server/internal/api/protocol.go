@@ -199,8 +199,11 @@ type updateConfigurationResponse struct {
 type credentialListResponse struct {
 	Credentials []credentialStatusDTO `json:"credentials"`
 }
+
+// credentialWriteRequest decodes the submitted value directly into a
+// redacting secret type; it is never held in a plain string field.
 type credentialWriteRequest struct {
-	Value string `json:"value"`
+	Value domain.CredentialSecret `json:"value"`
 }
 type credentialUpdateResponse struct {
 	Credential credentialStatusDTO `json:"credential"`

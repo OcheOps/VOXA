@@ -31,11 +31,23 @@ const (
 type Error struct {
 	Code    ErrorCode
 	Details map[string]any
-	Err     error
+	// Op names the failed use case (e.g. "meetings.list") for operator logs.
+	// It is never sent to clients.
+	Op  string
+	Err error
 }
 
 func (e *Error) Error() string { return string(e.Code) }
 func (e *Error) Unwrap() error { return e.Err }
+
+// storageError maps a repository failure to unavailable when the backend
+// could not be reached and to internal otherwise.
+func storageError(op string, err error) error {
+	if errors.Is(err, repository.ErrUnavailable) {
+		return &Error{Code: Unavailable, Op: op, Err: err}
+	}
+	return &Error{Code: Internal, Op: op, Err: err}
+}
 
 func validation(field, reason string) error {
 	return &Error{Code: Validation, Details: map[string]any{"field": field, "reason": reason}}
@@ -82,14 +94,14 @@ func (s *MeetingService) Create(ctx context.Context, workspaceID domain.Workspac
 	}
 	id, err := s.newID()
 	if err != nil {
-		return domain.Meeting{}, &Error{Code: Internal, Err: err}
+		return domain.Meeting{}, &Error{Code: Internal, Op: "meetings.create", Err: err}
 	}
 	now := s.timestamp()
 	meeting := domain.Meeting{ID: id, WorkspaceID: workspaceID, Title: title, Status: domain.MeetingCreated, CreatedAt: now, UpdatedAt: now}
 	if err := s.repository.Create(ctx, meeting); errors.Is(err, repository.ErrConflict) {
 		return domain.Meeting{}, &Error{Code: Conflict, Err: err}
 	} else if err != nil {
-		return domain.Meeting{}, &Error{Code: Internal, Err: err}
+		return domain.Meeting{}, storageError("meetings.create", err)
 	}
 	return meeting, nil
 }
@@ -103,7 +115,7 @@ func (s *MeetingService) Get(ctx context.Context, workspaceID domain.WorkspaceID
 		return domain.Meeting{}, &Error{Code: NotFound, Err: err}
 	}
 	if err != nil {
-		return domain.Meeting{}, &Error{Code: Internal, Err: err}
+		return domain.Meeting{}, storageError("meetings.get", err)
 	}
 	return meeting, nil
 }
@@ -127,7 +139,7 @@ func (s *MeetingService) Update(ctx context.Context, workspaceID domain.Workspac
 	if err := s.repository.Update(ctx, meeting); errors.Is(err, repository.ErrNotFound) {
 		return domain.Meeting{}, &Error{Code: NotFound, Err: err}
 	} else if err != nil {
-		return domain.Meeting{}, &Error{Code: Internal, Err: err}
+		return domain.Meeting{}, storageError("meetings.update", err)
 	}
 	return meeting, nil
 }
@@ -141,7 +153,7 @@ func (s *MeetingService) Delete(ctx context.Context, workspaceID domain.Workspac
 		return &Error{Code: NotFound, Err: err}
 	}
 	if err != nil {
-		return &Error{Code: Internal, Err: err}
+		return storageError("meetings.delete", err)
 	}
 	return nil
 }
@@ -164,14 +176,14 @@ func (s *MeetingService) List(ctx context.Context, workspaceID domain.WorkspaceI
 	}
 	items, hasMore, err := s.repository.List(ctx, workspaceID, position, limit)
 	if err != nil {
-		return MeetingPage{}, &Error{Code: Internal, Err: err}
+		return MeetingPage{}, storageError("meetings.list", err)
 	}
 	page := MeetingPage{Items: items, HasMore: hasMore}
 	if hasMore && len(items) > 0 {
 		last := items[len(items)-1]
 		next, err := encodeCursor(repository.MeetingPosition{CreatedAt: last.CreatedAt, ID: last.ID})
 		if err != nil {
-			return MeetingPage{}, &Error{Code: Internal, Err: err}
+			return MeetingPage{}, &Error{Code: Internal, Op: "meetings.list", Err: err}
 		}
 		page.NextCursor = &next
 	}
@@ -234,11 +246,11 @@ func NewConfigurationService(configurations repository.ConfigurationRepository, 
 func (s *ConfigurationService) Get(ctx context.Context, workspaceID domain.WorkspaceID) (domain.Configuration, []domain.CredentialStatus, error) {
 	config, err := s.configurations.Get(ctx, workspaceID)
 	if err != nil {
-		return domain.Configuration{}, nil, &Error{Code: Internal, Err: err}
+		return domain.Configuration{}, nil, storageError("configuration.get", err)
 	}
 	credentials, err := s.credentials.List(ctx, workspaceID)
 	if err != nil {
-		return domain.Configuration{}, nil, &Error{Code: Internal, Err: err}
+		return domain.Configuration{}, nil, storageError("credentials.list", err)
 	}
 	return config, credentials, nil
 }
@@ -306,7 +318,7 @@ func (s *ConfigurationService) Update(ctx context.Context, workspaceID domain.Wo
 		if errors.As(err, &appError) {
 			return domain.Configuration{}, nil, appError
 		}
-		return domain.Configuration{}, nil, &Error{Code: Internal, Err: err}
+		return domain.Configuration{}, nil, storageError("configuration.update", err)
 	}
 	_, credentials, err := s.Get(ctx, workspaceID)
 	return config, credentials, err
@@ -331,7 +343,7 @@ func validateProvider(provider string) error {
 func (s *CredentialService) List(ctx context.Context, workspaceID domain.WorkspaceID) ([]domain.CredentialStatus, error) {
 	statuses, err := s.repository.List(ctx, workspaceID)
 	if err != nil {
-		return nil, &Error{Code: Internal, Err: err}
+		return nil, storageError("credentials.list", err)
 	}
 	return statuses, nil
 }
@@ -341,19 +353,22 @@ func (s *CredentialService) IsConfigured(ctx context.Context, workspaceID domain
 	}
 	configured, err := s.repository.IsConfigured(ctx, workspaceID, provider)
 	if err != nil {
-		return false, &Error{Code: Internal, Err: err}
+		return false, storageError("credentials.check", err)
 	}
 	return configured, nil
 }
-func (s *CredentialService) Set(ctx context.Context, workspaceID domain.WorkspaceID, provider, secret string) (domain.CredentialStatus, error) {
+
+// Set stores a credential. The secret is write-only from the API's
+// perspective: no CredentialService method returns it.
+func (s *CredentialService) Set(ctx context.Context, workspaceID domain.WorkspaceID, provider string, secret domain.CredentialSecret) (domain.CredentialStatus, error) {
 	if err := validateProvider(provider); err != nil {
 		return domain.CredentialStatus{}, err
 	}
-	if strings.TrimSpace(secret) == "" {
+	if secret.IsBlank() {
 		return domain.CredentialStatus{}, validation("value", "must not be blank")
 	}
 	if err := s.repository.Set(ctx, workspaceID, provider, secret); err != nil {
-		return domain.CredentialStatus{}, &Error{Code: Internal, Err: err}
+		return domain.CredentialStatus{}, storageError("credentials.set", err)
 	}
 	return domain.CredentialStatus{Provider: provider, Configured: true}, nil
 }
@@ -362,7 +377,7 @@ func (s *CredentialService) Delete(ctx context.Context, workspaceID domain.Works
 		return err
 	}
 	if err := s.repository.Delete(ctx, workspaceID, provider); err != nil {
-		return &Error{Code: Internal, Err: err}
+		return storageError("credentials.delete", err)
 	}
 	return nil
 }

@@ -21,3 +21,9 @@ func TestConfigurationRepositoryContract(t *testing.T) {
 		return memory.NewConfigurationRepository(defaults)
 	})
 }
+
+func TestCredentialRepositoryContract(t *testing.T) {
+	repositorytest.CredentialRepositoryContract(t, func(*testing.T) repositorytest.CredentialStore {
+		return memory.NewCredentialRepository()
+	})
+}

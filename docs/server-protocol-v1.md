@@ -245,8 +245,9 @@ capabilities to/from the shared protocol.
 
 - authentication, membership and active-workspace selection;
 - production API handlers and runtime validation;
-- encrypted/persistent server credential storage (server meetings and
-  configuration persist in PostgreSQL; credentials remain in process memory);
+- KMS/Vault-backed credential keys and bulk credential re-encryption (server
+  credentials are already stored AES-256-GCM encrypted in PostgreSQL; see
+  `docs/server-credential-security.md`);
 - any replacement/migration of desktop SQLite;
 - object storage and resumable/chunked media upload;
 - media download, signed URLs and HTTP range playback;

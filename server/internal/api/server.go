@@ -17,6 +17,7 @@ import (
 
 	"github.com/OcheOps/voxa/server/internal/application"
 	"github.com/OcheOps/voxa/server/internal/domain"
+	"github.com/OcheOps/voxa/server/internal/repository"
 )
 
 const maxBodyBytes = 1 << 20
@@ -77,14 +78,14 @@ func (s *Server) listMeetings(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
-			writeError(w, r, &application.Error{Code: application.Validation, Details: map[string]any{"field": "limit", "reason": "must be an integer"}})
+			s.writeError(w, r, &application.Error{Code: application.Validation, Details: map[string]any{"field": "limit", "reason": "must be an integer"}})
 			return
 		}
 		limit = parsed
 	}
 	page, err := s.meetings.List(r.Context(), workspaceID(r), r.URL.Query().Get("cursor"), limit)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	items := make([]meetingDTO, 0, len(page.Items))
@@ -96,12 +97,12 @@ func (s *Server) listMeetings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createMeeting(w http.ResponseWriter, r *http.Request) {
 	var input createMeetingRequest
 	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	meeting, err := s.meetings.Create(r.Context(), workspaceID(r), input.Title)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, meetingResponse{Meeting: meetingFromDomain(meeting)})
@@ -109,7 +110,7 @@ func (s *Server) createMeeting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getMeeting(w http.ResponseWriter, r *http.Request) {
 	meeting, err := s.meetings.Get(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId")))
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, meetingResponse{Meeting: meetingFromDomain(meeting)})
@@ -117,7 +118,7 @@ func (s *Server) getMeeting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateMeeting(w http.ResponseWriter, r *http.Request) {
 	var input updateMeetingRequest
 	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	var title *string
@@ -126,14 +127,14 @@ func (s *Server) updateMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	meeting, err := s.meetings.Update(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId")), title)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, meetingResponse{Meeting: meetingFromDomain(meeting)})
 }
 func (s *Server) deleteMeeting(w http.ResponseWriter, r *http.Request) {
 	if err := s.meetings.Delete(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId"))); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -141,7 +142,7 @@ func (s *Server) deleteMeeting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getConfiguration(w http.ResponseWriter, r *http.Request) {
 	config, statuses, err := s.configuration.Get(r.Context(), workspaceID(r))
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, configurationFromDomain(workspaceID(r), config, statuses))
@@ -149,7 +150,7 @@ func (s *Server) getConfiguration(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateConfiguration(w http.ResponseWriter, r *http.Request) {
 	var input updateConfigurationRequest
 	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	patch := application.ConfigurationPatch{}
@@ -176,7 +177,7 @@ func (s *Server) updateConfiguration(w http.ResponseWriter, r *http.Request) {
 	}
 	config, statuses, err := s.configuration.Update(r.Context(), workspaceID(r), patch)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updateConfigurationResponse{Configuration: configurationFromDomain(workspaceID(r), config, statuses)})
@@ -191,7 +192,7 @@ func optionalPointer[T any](value optional[T]) *T {
 func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 	statuses, err := s.credentials.List(r.Context(), workspaceID(r))
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	result := credentialListResponse{Credentials: make([]credentialStatusDTO, 0, len(statuses))}
@@ -203,19 +204,20 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateCredential(w http.ResponseWriter, r *http.Request) {
 	var input credentialWriteRequest
 	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
+	defer input.Value.Wipe()
 	status, err := s.credentials.Set(r.Context(), workspaceID(r), r.PathValue("provider"), input.Value)
 	if err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, credentialUpdateResponse{Credential: credentialFromDomain(status)})
 }
 func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 	if err := s.credentials.Delete(r.Context(), workspaceID(r), r.PathValue("provider")); err != nil {
-		writeError(w, r, err)
+		s.writeError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -250,14 +252,70 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 var messages = map[application.ErrorCode]string{application.Validation: "Request validation failed", application.Unauthorized: "Authentication required", application.Forbidden: "Access forbidden", application.NotFound: "Resource not found", application.Conflict: "Resource conflict", application.Unavailable: "Service unavailable", application.Internal: "Internal server error"}
 
-func writeError(w http.ResponseWriter, r *http.Request, err error) {
+var statuses = map[application.ErrorCode]int{application.Validation: 400, application.Unauthorized: 401, application.Forbidden: 403, application.NotFound: 404, application.Conflict: 409, application.Unavailable: 503, application.Internal: 500}
+
+// writeError sends a generic, safe error body. Internal and unavailable
+// failures are also logged with operational context; client errors are not.
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	appErr := &application.Error{Code: application.Internal}
 	if !errors.As(err, &appErr) {
-		appErr = &application.Error{Code: application.Internal}
+		appErr = &application.Error{Code: application.Internal, Err: err}
 	}
-	status := map[application.ErrorCode]int{application.Validation: 400, application.Unauthorized: 401, application.Forbidden: 403, application.NotFound: 404, application.Conflict: 409, application.Unavailable: 503, application.Internal: 500}[appErr.Code]
-	writeJSON(w, status, apiErrorResponse{Error: apiErrorBody{Code: string(appErr.Code), Message: messages[appErr.Code], Details: appErr.Details, RequestID: requestID(r.Context())}})
+	if appErr.Code == application.Internal || appErr.Code == application.Unavailable {
+		s.logFailure(r, appErr)
+	}
+	writeJSON(w, statuses[appErr.Code], apiErrorResponse{Error: apiErrorBody{Code: string(appErr.Code), Message: messages[appErr.Code], Details: appErr.Details, RequestID: requestID(r.Context())}})
 }
+
+// logFailure records server-side failures. It logs identifiers, the route
+// template, and the error chain. Adapters return sanitized errors (no SQL
+// parameters, server messages, keys or secrets), so the chain is safe to log.
+// Request bodies, headers and query strings are never logged.
+func (s *Server) logFailure(r *http.Request, appErr *application.Error) {
+	level := slog.LevelError
+	if appErr.Code == application.Unavailable {
+		level = slog.LevelWarn
+	}
+	attrs := []slog.Attr{
+		slog.String("request_id", requestID(r.Context())),
+		slog.String("method", r.Method),
+		slog.String("route", r.Pattern),
+		slog.String("code", string(appErr.Code)),
+		slog.String("operation", appErr.Op),
+		slog.String("category", errorCategory(appErr.Err)),
+	}
+	if workspace, ok := r.Context().Value(workspaceKey).(domain.WorkspaceID); ok {
+		attrs = append(attrs, slog.String("workspace_id", string(workspace)))
+	}
+	if provider := r.PathValue("provider"); safeProvider.MatchString(provider) {
+		attrs = append(attrs, slog.String("provider", provider))
+	}
+	if appErr.Err != nil {
+		attrs = append(attrs, slog.Any("error", appErr.Err))
+	}
+	s.logger.LogAttrs(r.Context(), level, "request failed", attrs...)
+}
+
+var safeProvider = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func errorCategory(err error) string {
+	var unreadable *repository.CredentialUnreadableError
+	switch {
+	case err == nil:
+		return "unspecified"
+	case errors.Is(err, repository.ErrUnavailable):
+		return "storage_unavailable"
+	case errors.As(err, &unreadable):
+		return "credential_unreadable"
+	case errors.Is(err, context.Canceled):
+		return "client_cancelled"
+	case errors.Is(err, errPanic):
+		return "panic"
+	}
+	return "internal"
+}
+
+var errPanic = errors.New("handler panic recovered")
 
 var safeRequestID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
@@ -318,9 +376,9 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 func (s *Server) recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
+			// The panic value is not logged: it could carry request data.
 			if recover() != nil {
-				s.logger.Error("request panic", "request_id", requestID(r.Context()))
-				writeError(w, r, &application.Error{Code: application.Internal})
+				s.writeError(w, r, &application.Error{Code: application.Internal, Op: "http.handler", Err: errPanic})
 			}
 		}()
 		next.ServeHTTP(w, r)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/OcheOps/voxa/server/internal/adapters/memory"
 	"github.com/OcheOps/voxa/server/internal/adapters/postgres"
 	"github.com/OcheOps/voxa/server/internal/application"
+	"github.com/OcheOps/voxa/server/internal/credentialcrypto"
 	"github.com/OcheOps/voxa/server/internal/domain"
 	"github.com/OcheOps/voxa/server/internal/repository"
 	"github.com/OcheOps/voxa/server/migrations"
@@ -28,23 +30,30 @@ type storage struct {
 	close          func()
 }
 
-func openStorage(ctx context.Context, logger *slog.Logger, databaseURL string, workspaceID domain.WorkspaceID) (*storage, error) {
-	// Credentials stay in process memory for every backend until encrypted
-	// credential storage exists.
-	credentials := memory.NewCredentialRepository()
+func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) string, databaseURL string, workspaceID domain.WorkspaceID) (*storage, error) {
 	defaults := application.DefaultConfiguration()
 
 	if databaseURL == "" {
-		logger.Warn("using in-memory storage; meetings, configuration, and credentials are lost when the process exits",
-			"storage_backend", "memory", "credential_backend", "memory")
+		logger.Warn("using in-memory storage; meetings, configuration, and plaintext credentials are lost when the process exits (development only)",
+			"storage_backend", "memory", "credential_backend", "memory-plaintext")
+		if getenv(credentialKeyEnv) != "" {
+			logger.Warn("credential encryption key is configured but unused in memory mode", "credential_backend", "memory-plaintext")
+		}
 		return &storage{
 			backend:        "memory",
 			meetings:       memory.NewMeetingRepository(),
 			configurations: memory.NewConfigurationRepository(defaults),
-			credentials:    credentials,
+			credentials:    memory.NewCredentialRepository(),
 			ready:          func(context.Context) error { return nil },
 			close:          func() {},
 		}, nil
+	}
+
+	// Validate encryption keys before touching the database. There is no
+	// fallback to plaintext in-memory credentials in PostgreSQL mode.
+	keyRing, err := loadCredentialKeyRing(getenv)
+	if err != nil {
+		return nil, err
 	}
 
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
@@ -73,14 +82,28 @@ func openStorage(ctx context.Context, logger *slog.Logger, databaseURL string, w
 	}
 	logger.Info("development workspace ready", "development_workspace_id", workspaceID, "created", created)
 
-	logger.Warn("credentials are NOT persisted: provider secrets live only in process memory, are lost on restart, and are not production credential storage",
-		"storage_backend", "postgres", "credential_backend", "memory")
+	// Key versions are non-secret metadata (stored in plaintext beside each
+	// row), so they are safe to log.
+	stored, err := postgres.CredentialKeyVersions(startupCtx, pool)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("inspect stored credential key versions: %w", err)
+	}
+	loaded := keyRing.Versions()
+	for version, rows := range stored {
+		if !slices.Contains(loaded, version) {
+			logger.Warn("stored credentials use a key version that is not configured; they cannot be decrypted until that key is supplied",
+				"key_version", version, "credential_rows", rows)
+		}
+	}
+	logger.Info("credential storage ready", "credential_backend", "postgres-encrypted", "cipher", "AES-256-GCM",
+		"active_key_version", keyRing.ActiveVersion(), "loaded_key_versions", loaded)
 
 	return &storage{
 		backend:        "postgres",
 		meetings:       postgres.NewMeetingRepository(pool),
 		configurations: postgres.NewConfigurationRepository(pool, defaults),
-		credentials:    credentials,
+		credentials:    postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing)),
 		ready:          pool.Ping,
 		close:          pool.Close,
 	}, nil

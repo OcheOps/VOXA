@@ -342,3 +342,141 @@ func assertConfiguration(t *testing.T, got, want domain.Configuration) {
 		t.Fatalf("configuration = %#v (template %v), want %#v (template %v)", got, gotTemplate, want, wantTemplate)
 	}
 }
+
+// CredentialStore is the full credential surface an adapter provides:
+// metadata/write operations plus the internal secret reader.
+type CredentialStore interface {
+	repository.CredentialRepository
+	repository.CredentialSecretReader
+}
+
+// FakeSecret is an obviously identifiable value tests assert never leaks.
+const FakeSecret = "sk-VOXA-FAKE-SECRET-0xDEADBEEF"
+
+func newSecret(value string) domain.CredentialSecret {
+	return domain.NewCredentialSecret([]byte(value))
+}
+
+func assertRevealed(t *testing.T, repo CredentialStore, workspaceID domain.WorkspaceID, provider, want string) {
+	t.Helper()
+	got, err := repo.RevealCredential(context.Background(), workspaceID, provider)
+	if err != nil {
+		t.Fatalf("reveal %s/%s: %v", workspaceID, provider, err)
+	}
+	if string(got.Expose()) != want {
+		t.Fatalf("reveal %s/%s returned a different secret", workspaceID, provider)
+	}
+}
+
+// CredentialRepositoryContract runs the shared credential semantics.
+// newRepository must return an empty store on every call.
+func CredentialRepositoryContract(t *testing.T, newRepository func(t *testing.T) CredentialStore) {
+	ctx := context.Background()
+
+	t.Run("set list check and reveal", func(t *testing.T) {
+		repo := newRepository(t)
+		if err := repo.Set(ctx, WorkspaceA, "openai", newSecret(FakeSecret)); err != nil {
+			t.Fatal(err)
+		}
+		statuses, err := repo.List(ctx, WorkspaceA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(statuses) != 1 || statuses[0] != (domain.CredentialStatus{Provider: "openai", Configured: true}) {
+			t.Fatalf("statuses = %#v", statuses)
+		}
+		configured, err := repo.IsConfigured(ctx, WorkspaceA, "openai")
+		if err != nil || !configured {
+			t.Fatalf("configured=%v err=%v", configured, err)
+		}
+		configured, err = repo.IsConfigured(ctx, WorkspaceA, "anthropic")
+		if err != nil || configured {
+			t.Fatalf("unset provider configured=%v err=%v", configured, err)
+		}
+		assertRevealed(t, repo, WorkspaceA, "openai", FakeSecret)
+	})
+
+	t.Run("caller wiping its secret does not affect storage", func(t *testing.T) {
+		repo := newRepository(t)
+		secret := newSecret(FakeSecret)
+		if err := repo.Set(ctx, WorkspaceA, "openai", secret); err != nil {
+			t.Fatal(err)
+		}
+		secret.Wipe()
+		assertRevealed(t, repo, WorkspaceA, "openai", FakeSecret)
+	})
+
+	t.Run("update replaces secret", func(t *testing.T) {
+		repo := newRepository(t)
+		for _, value := range []string{"first-" + FakeSecret, "second-" + FakeSecret} {
+			if err := repo.Set(ctx, WorkspaceA, "openai", newSecret(value)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertRevealed(t, repo, WorkspaceA, "openai", "second-"+FakeSecret)
+		if statuses, err := repo.List(ctx, WorkspaceA); err != nil || len(statuses) != 1 {
+			t.Fatalf("statuses=%v err=%v", statuses, err)
+		}
+	})
+
+	t.Run("delete removes and is idempotent", func(t *testing.T) {
+		repo := newRepository(t)
+		if err := repo.Set(ctx, WorkspaceA, "openai", newSecret(FakeSecret)); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if err := repo.Delete(ctx, WorkspaceA, "openai"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if statuses, err := repo.List(ctx, WorkspaceA); err != nil || len(statuses) != 0 {
+			t.Fatalf("statuses=%v err=%v", statuses, err)
+		}
+		if _, err := repo.RevealCredential(ctx, WorkspaceA, "openai"); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("reveal after delete err = %v", err)
+		}
+	})
+
+	t.Run("list is ordered by provider", func(t *testing.T) {
+		repo := newRepository(t)
+		for _, provider := range []string{"openai", "Groq", "anthropic"} {
+			if err := repo.Set(ctx, WorkspaceA, provider, newSecret(FakeSecret)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		statuses, err := repo.List(ctx, WorkspaceA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var providers []string
+		for _, status := range statuses {
+			providers = append(providers, status.Provider)
+		}
+		if got := strings.Join(providers, ","); got != "Groq,anthropic,openai" {
+			t.Fatalf("order = %s", got)
+		}
+	})
+
+	t.Run("workspace isolation", func(t *testing.T) {
+		repo := newRepository(t)
+		if err := repo.Set(ctx, WorkspaceA, "openai", newSecret("a-"+FakeSecret)); err != nil {
+			t.Fatal(err)
+		}
+		if statuses, err := repo.List(ctx, WorkspaceB); err != nil || len(statuses) != 0 {
+			t.Fatalf("workspace-b statuses=%v err=%v", statuses, err)
+		}
+		if configured, err := repo.IsConfigured(ctx, WorkspaceB, "openai"); err != nil || configured {
+			t.Fatalf("workspace-b configured=%v err=%v", configured, err)
+		}
+		if _, err := repo.RevealCredential(ctx, WorkspaceB, "openai"); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("cross-workspace reveal err = %v", err)
+		}
+		if err := repo.Set(ctx, WorkspaceB, "openai", newSecret("b-"+FakeSecret)); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Delete(ctx, WorkspaceB, "openai"); err != nil {
+			t.Fatal(err)
+		}
+		assertRevealed(t, repo, WorkspaceA, "openai", "a-"+FakeSecret)
+	})
+}

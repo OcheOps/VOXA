@@ -45,7 +45,7 @@ func serve(logger *slog.Logger, databaseURL string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := openStorage(ctx, logger, databaseURL, workspaceID)
+	store, err := openStorage(ctx, logger, os.Getenv, databaseURL, workspaceID)
 	if err != nil {
 		logger.Error("storage startup failed", "error", err)
 		return 1

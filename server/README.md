@@ -1,13 +1,17 @@
 # Voxa server
 
 A single Go process that implements the `voxa-protocol` v1 HTTP contract.
-Meetings and workspace configuration persist in PostgreSQL when
-`VOXA_DATABASE_URL` is set. Otherwise everything runs on ephemeral in-memory
-adapters. Provider credentials are **always** in-memory for now (see
-[Limitations](#limitations)). This is not yet a media or processing service.
+When `VOXA_DATABASE_URL` is set, meetings, workspace configuration and
+provider credentials persist in PostgreSQL. Credentials are stored
+**AES-256-GCM encrypted** with a key that never enters the database.
+Without a database URL, everything runs on ephemeral in-memory adapters
+(development only). This is not yet a media or processing service.
 
-Design rationale (schema, migrations, pagination, atomicity):
-[`docs/server-persistence.md`](../docs/server-persistence.md).
+Design rationale:
+[`docs/server-persistence.md`](../docs/server-persistence.md) (schema,
+migrations, pagination, atomicity, outage classification) and
+[`docs/server-credential-security.md`](../docs/server-credential-security.md)
+(encryption, AAD, keys, rotation, threat model).
 
 ## Architecture
 
@@ -30,8 +34,11 @@ net/http middleware and handlers
   `repository/repositorytest` holds the contract tests every adapter must
   pass.
 - `internal/adapters/memory` provides ephemeral, mutex-protected adapters.
-- `internal/adapters/postgres` provides pgx/v5 adapters, the connection pool,
-  workspace bootstrap, and the migration runner.
+- `internal/adapters/postgres` provides pgx/v5 adapters (including the
+  encrypted credential repository), the connection pool, workspace bootstrap,
+  outage classification, and the migration runner.
+- `internal/credentialcrypto` provides AES-256-GCM sealing, AAD
+  construction, and the `KeyRing` abstraction.
 - `migrations/` holds versioned `NNNN_description.sql` files, embedded into
   the binary.
 
@@ -44,7 +51,11 @@ filesystem path is part of a meeting response.
 | Module | Why |
 | --- | --- |
 | `github.com/jackc/pgx/v5` | PostgreSQL driver and `pgxpool` connection pool. No ORM or query generator. |
-| `github.com/jackc/puddle/v2`, `jackc/pgpassfile`, `jackc/pgservicefile`, `golang.org/x/sync`, `golang.org/x/text` | Indirect dependencies of pgx. |
+| `github.com/jackc/puddle/v2` | pgx's pool implementation; imported directly only to recognize a closed pool as an outage. |
+| `jackc/pgpassfile`, `jackc/pgservicefile`, `golang.org/x/sync`, `golang.org/x/text` | Indirect dependencies of pgx. |
+
+Encryption uses only the Go standard library (`crypto/aes`,
+`crypto/cipher`, `crypto/rand`).
 
 The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 
@@ -55,6 +66,9 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | `VOXA_LISTEN_ADDR` | `:8080` | HTTP listen address. |
 | `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | The single server-controlled workspace every request is scoped to. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
+| `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
+| `VOXA_CREDENTIAL_KEY_VERSION` | unset | **Required with PostgreSQL.** Non-secret identifier stored with each credential, e.g. `2026-10`. Pattern `[A-Za-z0-9][A-Za-z0-9._-]{0,31}`. |
+| `VOXA_CREDENTIAL_PREVIOUS_KEYS` | unset | Optional decrypt-only keys for rotation: `version:base64,version:base64`. |
 
 The database URL is never logged. Startup logs only the host and database
 name. libpq-style parameters such as `sslmode`, `connect_timeout` and
@@ -66,15 +80,23 @@ after 5s.
 Without `VOXA_DATABASE_URL`, the server logs a warning that all data is
 ephemeral and starts on memory adapters.
 
-With `VOXA_DATABASE_URL`, these steps run within a 30s startup budget, and
-any failure exits non-zero before the listener opens:
+With `VOXA_DATABASE_URL`, these steps run in order, and any failure exits
+non-zero before the listener opens (steps 2–5 share a 30s budget):
 
-1. Parse the URL and connect. Verify connectivity with a ping.
-2. Apply pending migrations under an advisory lock, logging each one.
-3. Ensure the `VOXA_DEV_WORKSPACE_ID` row exists in `workspaces`, and log
+1. Validate and load the credential key ring. A missing or invalid key
+   stops startup here, before any database connection. The server never
+   falls back to plaintext in-memory credentials.
+2. Parse the URL and connect. Verify connectivity with a ping.
+3. Apply pending migrations under an advisory lock, logging each one.
+4. Ensure the `VOXA_DEV_WORKSPACE_ID` row exists in `workspaces`, and log
    whether it was created.
-4. Log a **warning that credentials are not persisted**.
-5. Serve HTTP.
+5. Check the key versions referenced by stored credentials. Warn about any
+   version that isn't loaded, because those rows can't be decrypted until
+   the key is supplied.
+6. Log `credential_backend=postgres-encrypted`, `active_key_version` and
+   `loaded_key_versions`. Key versions are non-secret metadata. Keys,
+   ciphertexts, nonces and the database URL are never logged.
+7. Serve HTTP.
 
 On SIGINT/SIGTERM the server stops accepting connections, drains in-flight
 requests for up to 10s, and then closes the pool.
@@ -85,7 +107,20 @@ requests for up to 10s, and then closes the pool.
   unchanged.
 - `GET /readyz` (operational, not part of the protocol) returns `200
   {"status":"ready","storage":"postgres"}` when the pool answers a ping
-  within 2s, and `503` otherwise. In memory mode it always returns ready.
+  within 2s, and `503 {"status":"unavailable",...}` otherwise, with no
+  connection details. In memory mode it always returns ready. A process
+  with invalid key configuration never starts, so it never reports ready.
+
+### Errors and logging
+
+Database outages (connect failures, timeouts, a closed pool, server
+shutdown and connection-class SQLSTATEs) return the protocol's `unavailable`
+error with HTTP 503. Validation, not-found and conflict errors are never
+reclassified, and unclassifiable failures stay `internal` (500). Every 500
+and 503 is logged as `msg: "request failed"` with request ID, method, route
+template, operation, public code, category, workspace ID, provider (when
+relevant) and a sanitized error chain. Request bodies, headers, query
+strings, secrets, keys and SQL parameters are never logged.
 
 ### Development workspace (temporary)
 
@@ -123,12 +158,15 @@ Rules:
 
 ## Local PostgreSQL
 
-Docker is optional and only provides the database:
+Docker is optional and only provides the database. Generate your own
+credential key; the repository deliberately contains none:
 
 ```sh
 cd server
 docker compose up -d postgres        # postgres:17, 127.0.0.1:55432, named volume
 export VOXA_DATABASE_URL='postgres://voxa:voxa-dev@127.0.0.1:55432/voxa?sslmode=disable'
+export VOXA_CREDENTIAL_KEY="$(openssl rand -base64 32)"   # keep it: losing it loses stored credentials
+export VOXA_CREDENTIAL_KEY_VERSION=dev-1
 go run ./cmd/voxa
 docker compose down                  # keep data;  `down -v` deletes the volume
 ```
@@ -151,8 +189,14 @@ go test ./...          # unit + memory contract tests; no database needed
 go test -race ./...
 ```
 
-PostgreSQL integration tests (adapter contract, migrations, bootstrap) run
-only when `VOXA_TEST_DATABASE_URL` is set, and skip cleanly otherwise. Each
+Unit tests include AES-GCM/AAD/key-validation tests, credential contract
+tests against the memory adapter, outage classification against a pool with
+no reachable server, and HTTP leak tests. None of them need a database.
+
+PostgreSQL integration tests (adapter contracts, encrypted credential rows,
+rotation, tamper/relocation, migrations and upgrades, bootstrap, HTTP
+restart) run only when `VOXA_TEST_DATABASE_URL` is set, and skip cleanly
+otherwise. Each
 test creates and drops its own schema, so the dev database can be used:
 
 ```sh
@@ -203,22 +247,31 @@ With PostgreSQL:
   Cursors are opaque, and malformed cursors return `validation`.
 - Configuration PATCH is an atomic read-modify-write under a row lock. No
   concurrent patch is lost, and a rejected patch changes nothing.
-- Database errors never reach HTTP responses. They surface as `internal`
-  (`not_found` and `conflict` where applicable).
+- Credentials survive restarts as AES-256-GCM ciphertext, each with a fresh
+  nonce, its key version, and AAD binding it to workspace and provider. No
+  HTTP endpoint returns secret material. GET returns only provider,
+  configured state and a fixed mask.
+- Database errors never reach HTTP responses. They surface as `unavailable`
+  (outages), `internal`, `not_found` or `conflict`.
 
 ## Limitations
 
-- **Credentials are not persisted.** With PostgreSQL enabled, provider
-  secrets are still plaintext in process memory and are lost on every
-  restart. This is non-production behavior, and it is logged as a warning at
-  startup. Encrypted storage or a secret manager is still required.
+- **Memory mode stores credentials in plaintext process memory.** It is for
+  development and tests only.
+- A compromised running server (or anyone who can read its environment)
+  can decrypt every credential. Encryption protects the database and its
+  backups, not the live process. TLS is still required in production,
+  both to clients and to PostgreSQL. See the threat model in
+  `docs/server-credential-security.md`.
+- Keys come from environment variables. KMS/Vault-backed key rings and
+  bulk re-encryption after rotation are not implemented yet.
 - There is no authentication or workspace membership. One configured
-  development workspace serves all requests.
+  development workspace serves all requests. Anyone who can reach the API
+  can overwrite or delete (but never read) its credentials.
 - There are no down migrations. Migrations that cannot run inside a
   transaction (such as `CREATE INDEX CONCURRENTLY`) are not supported yet.
-- Database outages surface as `internal` (500), not `unavailable` (503).
-  Use `/readyz` for load-balancer health.
-- Unexpected internal errors are not logged with detail yet.
+- Outage classification is conservative. Unrecognized driver failures
+  surface as `internal` (500) rather than `unavailable`.
 - Capabilities report media storage, transcription and summaries as
   unavailable. No upload, object storage, worker, WebSocket or job
   execution code exists.

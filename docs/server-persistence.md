@@ -11,12 +11,12 @@ contract is unchanged and remains defined by `docs/server-protocol-v1.md`.
 | Meetings | memory | PostgreSQL |
 | Workspace configuration | memory | PostgreSQL |
 | Development workspace | implicit | `workspaces` row, bootstrapped at startup |
-| Provider credentials | memory | **memory (not persisted)** |
+| Provider credentials | memory (plaintext, development only) | PostgreSQL, AES-256-GCM encrypted |
 
-Credentials are deliberately not stored in PostgreSQL. They need encrypted
-storage or an external secret manager, which is a separate task. With
-PostgreSQL enabled the server logs a warning at every startup that
-credentials are ephemeral.
+Credential encryption, keys, rotation and the threat model are described in
+`docs/server-credential-security.md`. In PostgreSQL mode the server refuses
+to start without a valid credential key, and it never falls back to
+in-memory credentials.
 
 ## Layering
 
@@ -27,18 +27,23 @@ cmd/voxa (startup wiring, backend selection, migrations, bootstrap, /readyz)
   -> internal/repository       storage-neutral ports
        <- internal/adapters/memory    concurrency-safe maps
        <- internal/adapters/postgres  pgx/v5, explicit SQL
+            -> internal/credentialcrypto  AES-256-GCM, KeyRing
 server/migrations              embedded, versioned .sql files
 ```
 
-The repository interfaces did not change. The backend is chosen once, in
+The repository interfaces did not change for meetings and configuration.
+For credentials, `Set` now takes a redacting `domain.CredentialSecret`
+instead of a string, and decryption lives in a separate
+`CredentialSecretReader` interface. The backend is chosen once, in
 `cmd/voxa/storage.go`; handlers and services never check the environment.
 `internal/repository/repositorytest` holds behavioral contract tests that
 both adapters must pass identically.
 
 ## Driver
 
-`github.com/jackc/pgx/v5` (with `pgxpool`) is the only new direct
-dependency. There is no ORM and no query generator: queries are short,
+`github.com/jackc/pgx/v5` (with `pgxpool`) is the only third-party
+library. Its own pool package, `puddle/v2`, is also imported directly to
+detect a closed pool. There is no ORM and no query generator: queries are short,
 explicit, parameterized SQL with typed scanning. Pool sizing uses pgx
 defaults. The only override is a 5s per-connection dial timeout, applied
 when the URL does not set `connect_timeout`.
@@ -126,13 +131,36 @@ positions compare exactly.
   `ErrNotFound`.
 - **Workspace bootstrap**: a single `INSERT … ON CONFLICT DO NOTHING`.
 
+`0002_workspace_credentials.sql` adds `workspace_credentials`: ciphertext,
+nonce and key version per `(workspace_id, provider)`. There is no plaintext
+column.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to
 `ErrConflict`. Other PostgreSQL errors are reduced to the operation name and
 SQLSTATE. Messages and details are dropped because they can echo row
-values. Services map anything else to `internal`. Every repository call runs
-under a 5s query timeout derived from the request context. All user values
+values.
+
+Outages are classified as `repository.ErrUnavailable`, which services map
+to `unavailable` (HTTP 503). Classification uses pgx error types, never
+message text:
+
+- `*pgconn.ConnectError`, `pgconn.Timeout`, `context.DeadlineExceeded`,
+  `net.Error`, `io.ErrUnexpectedEOF`, and a closed pool;
+- server codes in class `08` (connection exception), `57P01`/`57P02`/`57P03`
+  (shutdown, cannot connect now) and `53300` (too many connections).
+
+Validation, not-found and conflict outcomes are never reclassified. A
+caller-cancelled context is not treated as an outage. Anything that cannot
+be classified reliably stays `internal` (500). Connect errors are replaced
+with a generic message because pgx includes the user and database name in
+them. Services map everything else to `internal`. Every `internal` or
+`unavailable` response is logged with request ID, route template, operation
+and error category (see `docs/server-credential-security.md`).
+
+Every repository call runs under a 5s query timeout derived from the
+request context. All user values
 are bind parameters. A malformed `VOXA_DATABASE_URL` is reported without
 echoing the string, and logs carry only host and database name.
 

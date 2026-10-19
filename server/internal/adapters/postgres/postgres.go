@@ -6,11 +6,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/puddle/v2"
 
 	"github.com/OcheOps/voxa/server/internal/domain"
 	"github.com/OcheOps/voxa/server/internal/repository"
@@ -67,13 +71,60 @@ func translate(operation string, err error) error {
 	}
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
-		switch pgError.Code {
-		case "23505": // unique_violation
+		switch {
+		case pgError.Code == "23505": // unique_violation
 			return repository.ErrConflict
-		case "23503": // foreign_key_violation
+		case pgError.Code == "23503": // foreign_key_violation
 			return fmt.Errorf("postgres %s: referenced workspace does not exist", operation)
+		case unavailableSQLState(pgError.Code):
+			return fmt.Errorf("postgres %s: sqlstate %s: %w", operation, pgError.Code, repository.ErrUnavailable)
 		}
 		return fmt.Errorf("postgres %s: sqlstate %s", operation, pgError.Code)
 	}
+	if unavailableTransport(err) {
+		return fmt.Errorf("postgres %s: %w: %w", operation, repository.ErrUnavailable, safeTransportError(err))
+	}
 	return fmt.Errorf("postgres %s: %w", operation, err)
+}
+
+// unavailableSQLState reports server-sent codes that mean the database
+// cannot serve requests right now, as opposed to a problem with the request.
+func unavailableSQLState(code string) bool {
+	switch {
+	case strings.HasPrefix(code, "08"): // connection_exception class
+		return true
+	case code == "57P01", code == "57P02", code == "57P03": // admin/crash shutdown, cannot_connect_now
+		return true
+	case code == "53300": // too_many_connections
+		return true
+	}
+	return false
+}
+
+// unavailableTransport classifies failures that never produced a server
+// response: connect errors, timeouts, broken connections and a closed pool.
+// Errors that cannot be classified reliably stay internal.
+func unavailableTransport(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		// The caller went away; this says nothing about database health.
+		return false
+	}
+	var connectError *pgconn.ConnectError
+	var netError net.Error
+	return errors.As(err, &connectError) ||
+		pgconn.Timeout(err) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.As(err, &netError) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, puddle.ErrClosedPool)
+}
+
+// safeTransportError keeps the classification-relevant chain while avoiding
+// connection-string details: ConnectError text names the user and database.
+func safeTransportError(err error) error {
+	var connectError *pgconn.ConnectError
+	if errors.As(err, &connectError) {
+		return errors.New("could not connect to database")
+	}
+	return err
 }

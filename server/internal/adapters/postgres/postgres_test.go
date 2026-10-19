@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -188,7 +189,7 @@ func TestMigrationsApplyToEmptyDatabaseAndRerunIsIdempotent(t *testing.T) {
 	if len(applied) != len(before) {
 		t.Fatalf("applied %d migrations, want %d", len(applied), len(before))
 	}
-	for _, table := range []string{"workspaces", "meetings", "workspace_configuration"} {
+	for _, table := range []string{"workspaces", "meetings", "workspace_configuration", "workspace_credentials"} {
 		if !tableExists(t, pool, table) {
 			t.Fatalf("table %s missing", table)
 		}
@@ -208,7 +209,7 @@ ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(collations, " "); got != "meetings.id=C meetings.workspace_id=C workspace_configuration.workspace_id=C workspaces.id=C" {
+	if got := strings.Join(collations, " "); got != "meetings.id=C meetings.workspace_id=C workspace_configuration.workspace_id=C workspace_credentials.workspace_id=C workspaces.id=C" {
 		t.Fatalf("identifier collations = %s", got)
 	}
 
@@ -305,5 +306,57 @@ func TestConcurrentMigrationRunsApplyOnce(t *testing.T) {
 	}
 	if total != len(state) {
 		t.Fatalf("applied %d migrations across runners, want %d", total, len(state))
+	}
+}
+
+func TestDatabaseWithMeetingsAndConfigurationUpgradesToCredentials(t *testing.T) {
+	pool := isolatedPool(t)
+	ctx := context.Background()
+	initial, err := fs.ReadFile(migrations.Files, "0001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A database created by the previous release: only 0001 applied, with data.
+	if _, err := postgres.Migrate(ctx, pool, fstest.MapFS{"0001_initial.sql": {Data: initial}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.EnsureWorkspace(ctx, pool, repositorytest.WorkspaceA); err != nil {
+		t.Fatal(err)
+	}
+	meetings := postgres.NewMeetingRepository(pool)
+	created := domain.Meeting{ID: "mtg_existing", WorkspaceID: repositorytest.WorkspaceA, Title: "Before upgrade", Status: domain.MeetingCreated, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	created.UpdatedAt = created.CreatedAt
+	if err := meetings.Create(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	configurations := postgres.NewConfigurationRepository(pool, application.DefaultConfiguration())
+	if _, err := configurations.Update(ctx, repositorytest.WorkspaceA, func(c domain.Configuration) (domain.Configuration, error) {
+		c.Summary.Model = "kept-model"
+		return c, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists(t, pool, "workspace_credentials") {
+		t.Fatal("credential table exists before upgrade")
+	}
+
+	applied, err := postgres.Migrate(ctx, pool, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied) != 1 || applied[0].Version != 2 {
+		t.Fatalf("upgrade applied %#v, want only version 2", applied)
+	}
+	if got, err := meetings.Get(ctx, repositorytest.WorkspaceA, created.ID); err != nil || got.Title != created.Title {
+		t.Fatalf("meeting after upgrade = %#v err=%v", got, err)
+	}
+	if got, err := configurations.Get(ctx, repositorytest.WorkspaceA); err != nil || got.Summary.Model != "kept-model" {
+		t.Fatalf("configuration after upgrade = %#v err=%v", got, err)
+	}
+	if !tableExists(t, pool, "workspace_credentials") {
+		t.Fatal("credential table missing after upgrade")
+	}
+	if again, err := postgres.Migrate(ctx, pool, migrations.Files); err != nil || len(again) != 0 {
+		t.Fatalf("rerun applied=%d err=%v", len(again), err)
 	}
 }

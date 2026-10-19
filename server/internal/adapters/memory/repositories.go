@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"sort"
 	"sync"
@@ -118,21 +119,23 @@ func (r *ConfigurationRepository) Update(_ context.Context, workspaceID domain.W
 	return config, nil
 }
 
+// CredentialRepository keeps plaintext secrets in process memory. It is a
+// development/test adapter only and is never used when PostgreSQL is enabled.
 type CredentialRepository struct {
 	mu      sync.RWMutex
-	secrets map[domain.WorkspaceID]map[string]string
+	secrets map[domain.WorkspaceID]map[string][]byte
 }
 
 func NewCredentialRepository() *CredentialRepository {
-	return &CredentialRepository{secrets: make(map[domain.WorkspaceID]map[string]string)}
+	return &CredentialRepository{secrets: make(map[domain.WorkspaceID]map[string][]byte)}
 }
 
 func (r *CredentialRepository) List(_ context.Context, workspaceID domain.WorkspaceID) ([]domain.CredentialStatus, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	statuses := make([]domain.CredentialStatus, 0, len(r.secrets[workspaceID]))
-	for provider, secret := range r.secrets[workspaceID] {
-		statuses = append(statuses, domain.CredentialStatus{Provider: provider, Configured: secret != ""})
+	for provider := range r.secrets[workspaceID] {
+		statuses = append(statuses, domain.CredentialStatus{Provider: provider, Configured: true})
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Provider < statuses[j].Provider })
 	return statuses, nil
@@ -141,16 +144,18 @@ func (r *CredentialRepository) List(_ context.Context, workspaceID domain.Worksp
 func (r *CredentialRepository) IsConfigured(_ context.Context, workspaceID domain.WorkspaceID, provider string) (bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.secrets[workspaceID][provider] != "", nil
+	_, ok := r.secrets[workspaceID][provider]
+	return ok, nil
 }
 
-func (r *CredentialRepository) Set(_ context.Context, workspaceID domain.WorkspaceID, provider, secret string) error {
+func (r *CredentialRepository) Set(_ context.Context, workspaceID domain.WorkspaceID, provider string, secret domain.CredentialSecret) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.secrets[workspaceID] == nil {
-		r.secrets[workspaceID] = make(map[string]string)
+		r.secrets[workspaceID] = make(map[string][]byte)
 	}
-	r.secrets[workspaceID][provider] = secret
+	// Copy so the caller may Wipe its secret after the call.
+	r.secrets[workspaceID][provider] = bytes.Clone(secret.Expose())
 	return nil
 }
 
@@ -159,4 +164,15 @@ func (r *CredentialRepository) Delete(_ context.Context, workspaceID domain.Work
 	defer r.mu.Unlock()
 	delete(r.secrets[workspaceID], provider)
 	return nil
+}
+
+// RevealCredential implements repository.CredentialSecretReader.
+func (r *CredentialRepository) RevealCredential(_ context.Context, workspaceID domain.WorkspaceID, provider string) (domain.CredentialSecret, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	secret, ok := r.secrets[workspaceID][provider]
+	if !ok {
+		return domain.CredentialSecret{}, repository.ErrNotFound
+	}
+	return domain.NewCredentialSecret(bytes.Clone(secret)), nil
 }
