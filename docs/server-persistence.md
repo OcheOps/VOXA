@@ -145,6 +145,15 @@ column.
 
 See `docs/server-authentication.md`.
 
+`0004_media.sql` adds `recording_sessions` and `media_assets`:
+- both reference `meetings(workspace_id, id)`, and cascade when the meeting
+  is deleted;
+- `media_assets.storage_key` is an internal, unique locator, never exposed;
+- asset status is `uploading`, `ready` or `failed`;
+- an index on stale uploads supports cleanup.
+
+See `docs/voxa-web-recording.md`.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to

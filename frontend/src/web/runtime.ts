@@ -6,12 +6,19 @@ import { HttpIdentityClient } from '@/clients/http/identity-client';
 import { HttpTransport, type FetchLike } from '@/clients/http/transport';
 import { createWebVoxaClient } from '@/clients/web';
 import type { WebConfig } from '@/config/web';
+import { createPendingStore } from './recording/pending-store';
+import { browserRecordingLocks, RecordingUploadCoordinator } from './recording/upload-coordinator';
+import { RecordingSessionController } from './recording/session';
+import { BrowserRecordingClient } from '@/clients/browser/recording-client';
 
 export interface WebRuntime {
   config: WebConfig;
   client: VoxaClient;
   identity: HttpIdentityClient;
   auth: AuthController;
+  uploads: RecordingUploadCoordinator;
+  /** Present when this browser can record (microphone + MediaRecorder + supported format). */
+  recordingSession: RecordingSessionController | null;
 }
 
 export interface WebRuntimeDependencies {
@@ -21,6 +28,7 @@ export interface WebRuntimeDependencies {
   currentPath: () => string;
   replacePath: (path: string) => void;
   fetch?: FetchLike;
+  pendingStore?: import('./recording/pending-store').PendingChunkStore;
 }
 
 /**
@@ -50,5 +58,20 @@ export function createWebRuntime(dependencies: WebRuntimeDependencies): WebRunti
     currentPath: dependencies.currentPath,
     replacePath: dependencies.replacePath,
   });
-  return { config, client: createWebVoxaClient(transport), identity, auth };
+  const client = createWebVoxaClient(transport, config.apiBaseUrl);
+  const scope = globalThis as { navigator?: { onLine?: boolean }; window?: Pick<Window, 'addEventListener' | 'removeEventListener'> };
+  const uploads = new RecordingUploadCoordinator({
+    media: client.serverMedia!,
+    store: dependencies.pendingStore ?? createPendingStore(),
+    locks: browserRecordingLocks(),
+    isOnline: () => scope.navigator?.onLine !== false,
+    onOnline: (callback) => {
+      scope.window?.addEventListener('online', callback);
+      return () => scope.window?.removeEventListener('online', callback);
+    },
+  });
+  const recordingSession = client.recording instanceof BrowserRecordingClient && client.recording.capabilities.microphoneCapture
+    ? new RecordingSessionController(client.recording, uploads)
+    : null;
+  return { config, client, identity, auth, uploads, recordingSession };
 }

@@ -33,3 +33,9 @@ func TestIdentityRepositoryContract(t *testing.T) {
 		return memory.NewIdentityRepository()
 	})
 }
+
+func TestMediaRepositoryContract(t *testing.T) {
+	repositorytest.MediaRepositoryContract(t, func(*testing.T) repository.MediaRepository {
+		return memory.NewMediaRepository()
+	})
+}

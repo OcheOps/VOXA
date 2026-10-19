@@ -64,6 +64,8 @@ export interface RecordingState {
 }
 
 export interface RecordingCapabilities {
+  /** The runtime can record from a microphone. */
+  microphoneCapture: boolean;
   systemAudioCapture: 'native' | 'display-media' | 'unavailable';
   deviceEnumeration: 'input-and-output' | 'input-only' | 'unavailable';
   microphoneHotSwap: 'automatic' | 'manual' | 'unavailable';
@@ -501,6 +503,53 @@ export interface ConfigurationClient {
   saveNotificationPreferences(preferences: NotificationPreferences): Promise<void>;
 }
 
+/** Server-stored media (web). Capture itself stays in RecordingClient. */
+export type ServerMediaStatus = 'uploading' | 'ready' | 'failed';
+
+export interface ServerMediaAsset {
+  id: string;
+  meetingId: string;
+  mimeType: string;
+  status: ServerMediaStatus;
+  durationSeconds: number | null;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordingUploadTarget {
+  asset: ServerMediaAsset;
+  recordingSessionId: string;
+  maxChunkBytes: number;
+  maxTotalBytes: number;
+}
+
+export interface UploadProgress {
+  status: ServerMediaStatus;
+  receivedChunks: number[];
+  receivedBytes: number;
+}
+
+export interface PlaybackUrl {
+  url: string;
+  expiresAt: string;
+}
+
+/**
+ * Chunked, resumable recording storage on the Voxa server. Chunks are
+ * ordered pieces of one encoder stream; retries of identical chunks are
+ * safe and finalization requires exactly chunks 0..n-1.
+ */
+export interface ServerMediaClient {
+  createRecording(meetingId: string, mimeType: string): Promise<RecordingUploadTarget>;
+  uploadChunk(mediaAssetId: string, index: number, data: Blob, signal?: AbortSignal): Promise<UploadProgress>;
+  getUploadStatus(mediaAssetId: string): Promise<UploadProgress>;
+  finalize(mediaAssetId: string, chunkCount: number, durationSeconds: number | null): Promise<ServerMediaAsset>;
+  listMeetingMedia(meetingId: string): Promise<ServerMediaAsset[]>;
+  getPlaybackUrl(mediaAssetId: string): Promise<PlaybackUrl>;
+  deleteMedia(mediaAssetId: string): Promise<void>;
+}
+
 /** Provider credential metadata. Secrets are write-only and never read back. */
 export interface CredentialStatus {
   provider: string;
@@ -547,4 +596,6 @@ export interface VoxaClient {
   credentials?: CredentialClient;
   /** Present only where workspace defaults live on a server (web). */
   workspaceSettings?: WorkspaceSettingsClient;
+  /** Present only where media is stored on a server (web). */
+  serverMedia?: ServerMediaClient;
 }

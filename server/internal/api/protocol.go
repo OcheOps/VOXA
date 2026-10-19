@@ -59,6 +59,86 @@ type meResponse struct {
 	Role      string              `json:"role"`
 }
 
+type mediaAssetDTO struct {
+	ID                 string   `json:"id"`
+	WorkspaceID        string   `json:"workspaceId"`
+	MeetingID          string   `json:"meetingId"`
+	RecordingSessionID *string  `json:"recordingSessionId"`
+	Kind               string   `json:"kind"`
+	MimeType           string   `json:"mimeType"`
+	Status             string   `json:"status"`
+	DurationSeconds    *float64 `json:"durationSeconds"`
+	SizeBytes          int64    `json:"sizeBytes"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
+}
+
+// mediaAssetFromDomain never includes the internal storage key.
+func mediaAssetFromDomain(a domain.MediaAsset) mediaAssetDTO {
+	dto := mediaAssetDTO{ID: string(a.ID), WorkspaceID: string(a.WorkspaceID), MeetingID: string(a.MeetingID), Kind: string(a.Kind),
+		MimeType: a.MimeType, Status: string(a.Status), DurationSeconds: a.DurationSeconds, SizeBytes: a.SizeBytes,
+		CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: a.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	if a.RecordingSessionID != nil {
+		id := string(*a.RecordingSessionID)
+		dto.RecordingSessionID = &id
+	}
+	return dto
+}
+
+type recordingSessionDTO struct {
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspaceId"`
+	MeetingID   string  `json:"meetingId"`
+	Status      string  `json:"status"`
+	StartedAt   string  `json:"startedAt"`
+	EndedAt     *string `json:"endedAt"`
+	CreatedAt   string  `json:"createdAt"`
+}
+
+func recordingSessionFromDomain(s domain.RecordingSession) recordingSessionDTO {
+	dto := recordingSessionDTO{ID: string(s.ID), WorkspaceID: string(s.WorkspaceID), MeetingID: string(s.MeetingID), Status: string(s.Status),
+		StartedAt: s.StartedAt.UTC().Format(time.RFC3339Nano), CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano)}
+	if s.EndedAt != nil {
+		ended := s.EndedAt.UTC().Format(time.RFC3339Nano)
+		dto.EndedAt = &ended
+	}
+	return dto
+}
+
+type mediaUploadDTO struct {
+	MediaAssetID   string `json:"mediaAssetId"`
+	Status         string `json:"status"`
+	ReceivedChunks []int  `json:"receivedChunks"`
+	ReceivedBytes  int64  `json:"receivedBytes"`
+	MaxChunkBytes  int64  `json:"maxChunkBytes"`
+	MaxTotalBytes  int64  `json:"maxTotalBytes"`
+}
+type createRecordingRequest struct {
+	MimeType string `json:"mimeType"`
+}
+type createRecordingResponse struct {
+	RecordingSession recordingSessionDTO `json:"recordingSession"`
+	MediaAsset       mediaAssetDTO       `json:"mediaAsset"`
+	Upload           mediaUploadDTO      `json:"upload"`
+}
+type uploadResponse struct {
+	Upload mediaUploadDTO `json:"upload"`
+}
+type finalizeMediaRequest struct {
+	ChunkCount      int      `json:"chunkCount"`
+	DurationSeconds *float64 `json:"durationSeconds"`
+}
+type mediaAssetResponse struct {
+	MediaAsset mediaAssetDTO `json:"mediaAsset"`
+}
+type meetingMediaResponse struct {
+	Items []mediaAssetDTO `json:"items"`
+}
+type mediaPlaybackResponse struct {
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
 type createMeetingRequest struct {
 	Title string `json:"title"`
 }

@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { MeetingMetadata } from '@/types';
 import { CapabilityNotice } from './CapabilityNotice';
+import { MeetingMedia } from './recording/MeetingMedia';
+import { RecordingPanel } from './recording/RecordingPanel';
 import { describeError } from './errors';
 
 function formatDate(value: string): string {
@@ -110,9 +112,10 @@ function MeetingDetail() {
         <p className="text-xs text-gray-500">Created {formatDate(meeting.created_at)} · Updated {formatDate(meeting.updated_at)}</p>
       </header>
 
-      <section className="space-y-2">
+      <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-700">Recording</h2>
-        <p className="text-sm text-gray-500">No audio is stored for this meeting.</p>
+        <RecordingPanel meetingId={meeting.id} />
+        <MeetingMedia meetingId={meeting.id} />
       </section>
       <section className="space-y-2">
         <h2 className="text-sm font-semibold text-gray-700">Transcript</h2>

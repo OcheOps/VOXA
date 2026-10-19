@@ -129,6 +129,18 @@ contract.
 | GET | `/api/v1/credentials` | none | `CredentialListResponse` |
 | PUT | `/api/v1/credentials/:provider` | `CredentialWriteRequest` | `CredentialUpdateResponse` |
 | DELETE | `/api/v1/credentials/:provider` | path provider | no body |
+| POST | `/api/v1/meetings/:meetingId/recordings` | `CreateRecordingRequest` | `CreateRecordingResponse` |
+| GET | `/api/v1/meetings/:meetingId/media` | path ID | `MeetingMediaResponse` |
+| GET / DELETE | `/api/v1/media/:mediaAssetId` | path ID | `MediaAssetResponse` / no body |
+| GET | `/api/v1/media/:mediaAssetId/upload` | path ID | `MediaUploadResponse` |
+| PUT | `/api/v1/media/:mediaAssetId/chunks/:index` | raw bytes (`application/octet-stream`) | `MediaUploadResponse` |
+| POST | `/api/v1/media/:mediaAssetId/finalize` | `FinalizeMediaRequest` | `MediaAssetResponse` |
+| GET | `/api/v1/media/:mediaAssetId/playback` | path ID | `MediaPlaybackResponse` (signed URL) |
+| GET | `/api/v1/media/:mediaAssetId/content` | `Range` optional | audio bytes (206 for ranges) |
+
+Media routes and their semantics are described in
+`docs/voxa-web-recording.md`. `MediaAsset` gained `status` (`uploading`,
+`ready`, `failed`) and `updatedAt`, an additive change.
 
 `health` and `capabilities` are public. Every other route requires
 authentication: `401 unauthorized` without a valid bearer token, `403
@@ -263,8 +275,8 @@ capabilities to/from the shared protocol.
   credentials are already stored AES-256-GCM encrypted in PostgreSQL; see
   `docs/server-credential-security.md`);
 - any replacement/migration of desktop SQLite;
-- object storage and resumable/chunked media upload;
-- media download, signed URLs and HTTP range playback;
+- S3-compatible object storage (filesystem storage, chunked resumable
+  upload, signed URLs and range playback exist);
 - transcription, summary, import/transcode and diarization job execution;
 - queue/workers or any microservice split;
 - browser/PWA recording and capture APIs;

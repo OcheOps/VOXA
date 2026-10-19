@@ -60,6 +60,12 @@ func serve(logger *slog.Logger, databaseURL string) int {
 		return 1
 	}
 
+	mediaOptions, err := openMedia(ctx, logger, os.Getenv, store)
+	if err != nil {
+		logger.Error("media storage startup failed", "error", err)
+		return 1
+	}
+
 	apiHandler := api.NewHandler(
 		application.NewMeetingService(store.meetings),
 		application.NewConfigurationService(store.configurations, store.credentials),
@@ -68,6 +74,7 @@ func serve(logger *slog.Logger, databaseURL string) int {
 		resolver,
 		serverVersion,
 		logger,
+		mediaOptions...,
 	)
 	corsPolicy, err := api.ParseAllowedOrigins(os.Getenv("VOXA_ALLOWED_ORIGINS"))
 	if err != nil {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readWebConfig, WebConfigError } from '../../src/config/web';
+import { DEFAULT_RECORDING_NOTICE, readWebConfig, WebConfigError } from '../../src/config/web';
 
 const ORIGIN = 'https://voxa.example.com';
 const oidc = {
@@ -16,6 +16,7 @@ describe('readWebConfig', () => {
         mode: 'oidc', issuer: 'https://id.example.com/realms/voxa', clientId: 'voxa-web',
         scope: 'openid profile email', redirectUri: `${ORIGIN}/auth/callback`, bearer: 'access_token',
       },
+      recordingNotice: DEFAULT_RECORDING_NOTICE,
     });
   });
 
@@ -26,7 +27,9 @@ describe('readWebConfig', () => {
 
   test('development mode needs only the API URL', () => {
     expect(readWebConfig({ NEXT_PUBLIC_VOXA_API_URL: 'http://localhost:8080', NEXT_PUBLIC_VOXA_AUTH_MODE: 'development' }, ORIGIN))
-      .toEqual({ apiBaseUrl: 'http://localhost:8080', auth: { mode: 'development' } });
+      .toEqual({ apiBaseUrl: 'http://localhost:8080', auth: { mode: 'development' }, recordingNotice: DEFAULT_RECORDING_NOTICE });
+    expect(readWebConfig({ NEXT_PUBLIC_VOXA_API_URL: 'http://localhost:8080', NEXT_PUBLIC_VOXA_AUTH_MODE: 'development', NEXT_PUBLIC_VOXA_RECORDING_NOTICE: ' Tell everyone. ' }, ORIGIN).recordingNotice)
+      .toBe('Tell everyone.');
   });
 
   test('rejects unsafe or incomplete configuration', () => {

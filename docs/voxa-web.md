@@ -64,7 +64,9 @@ Clients:
 | Workspace settings | `HttpWorkspaceSettingsClient`: typed get and partial `PATCH` of server defaults. |
 | Credentials | `HttpCredentialClient`: list metadata, `PUT` a secret, `DELETE`. Secrets are never read or stored. |
 | Identity | `HttpIdentityClient`: `GET /api/v1/me` and `GET /api/v1/capabilities`. |
-| Recording, media, transcription, summaries | `Unavailable*` clients (`src/clients/unavailable.ts`): honest capabilities, idle or empty queries, no-op subscriptions, and `UnsupportedOperationError` for actions. |
+| Recording | `BrowserRecordingClient`: microphone via `getUserMedia` + `MediaRecorder` (see `docs/voxa-web-recording.md`). |
+| Media | `HttpMediaClient`: chunked uploads, meeting media, signed range playback. |
+| Transcription, summaries | `Unavailable*` clients (`src/clients/unavailable.ts`): honest capabilities, idle or empty queries, no-op subscriptions, and `UnsupportedOperationError` for actions. |
 
 DTOs are typed against `@voxa/protocol` through a type-only `tsconfig` path,
 so there is no runtime dependency and no build step.
@@ -227,24 +229,28 @@ API over HTTPS, because bearer tokens over plain HTTP are exposed.
   and processing notifications.
 - Provider API keys: configured/masked state, set or replace, remove. Keys
   are never shown again.
+- Microphone recording on the meeting page:
+  - start, pause/resume and stop, with a consent reminder;
+  - parts are saved on the device while offline, uploads resume
+    automatically, and recordings are recovered after a reload;
+  - range-streamed playback (see `docs/voxa-web-recording.md`).
 
 ## 11. Unsupported in Voxa Web (by design, for now)
 
-Recording (microphone, system or tab audio), device selection, audio storage
-and playback, uploads/import, transcription, summaries, transcript search,
+Tab or system audio capture, file import, transcription, summaries,
+transcript search,
 local models, the recordings folder, file reveal, the tray, the updater,
 OS notifications, workspace selection, and invitations. Capabilities report
 these truthfully and the UI hides them or explains why they are missing.
 
 ## 12. Future work
 
-- **Browser recording:** a `BrowserRecordingClient` using `getUserMedia`
-  (microphone) and `getDisplayMedia` (tab/system audio where the browser
-  allows it). It reports `systemAudioCapture: 'display-media'` and
-  `deviceEnumeration: 'input-only'`, and needs server media upload to be
-  useful.
-- **Media, transcription and summaries:** once the server advertises
-  `mediaStorage`, `transcription` and `summary` as available, add
+- **Tab and system audio:** microphone recording exists (see
+  `docs/voxa-web-recording.md`). Next is `getDisplayMedia` for tab audio
+  where the browser allows it, reported as
+  `systemAudioCapture: 'display-media'`.
+- **Transcription and summaries:** media storage exists. Once the server
+  advertises `transcription` and `summary` as available, add
   `HttpMediaClient` (resumable upload, range playback),
   `HttpTranscriptionClient` and `HttpSummaryClient` (job creation, status
   polling, cancellation), selected by the same capabilities.

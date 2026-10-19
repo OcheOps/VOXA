@@ -66,6 +66,7 @@ function withStartTimeout<T>(promise: Promise<T>): Promise<T> {
 
 export class TauriRecordingClient implements RecordingClient {
   readonly capabilities: RecordingCapabilities = {
+    microphoneCapture: true,
     systemAudioCapture: 'native',
     deviceEnumeration: 'input-and-output',
     microphoneHotSwap: 'automatic',

@@ -51,6 +51,8 @@ export interface HttpTransportOptions {
 
 export interface RequestOptions {
   body?: unknown;
+  /** Raw bytes sent as-is (e.g. media chunks) instead of a JSON body. */
+  binary?: { data: Blob | ArrayBuffer; contentType: string };
   query?: Record<string, string | number | undefined>;
   signal?: AbortSignal;
 }
@@ -93,14 +95,15 @@ export class HttpTransport {
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = this.options.getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (options.binary) headers['Content-Type'] = options.binary.contentType;
+    else if (options.body !== undefined) headers['Content-Type'] = 'application/json';
 
     let response: Response;
     try {
       response = await this.fetchImpl(url.toString(), {
         method,
         headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body: options.binary ? options.binary.data : options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: options.signal,
         // Bearer tokens only: no cookies, no cached responses, and no
         // following redirects to another origin with the Authorization header.

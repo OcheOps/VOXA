@@ -13,7 +13,9 @@ export interface Meeting { id: MeetingId; workspaceId: WorkspaceId; title: strin
 export type RecordingSessionStatus = 'recording' | 'paused' | 'completed' | 'failed' | 'cancelled';
 export interface RecordingSession { id: RecordingSessionId; workspaceId: WorkspaceId; meetingId: MeetingId; status: RecordingSessionStatus; startedAt: IsoDateTime; endedAt: IsoDateTime | null; createdAt: IsoDateTime; }
 export type MediaAssetKind = 'audio';
-export interface MediaAsset { id: MediaAssetId; workspaceId: WorkspaceId; meetingId: MeetingId; recordingSessionId: RecordingSessionId | null; kind: MediaAssetKind; mimeType: string; durationSeconds: number | null; sizeBytes: number; createdAt: IsoDateTime; }
+/** uploading: chunks may still arrive; ready: assembled and playable; failed: abandoned. */
+export type MediaAssetStatus = 'uploading' | 'ready' | 'failed';
+export interface MediaAsset { id: MediaAssetId; workspaceId: WorkspaceId; meetingId: MeetingId; recordingSessionId: RecordingSessionId | null; kind: MediaAssetKind; mimeType: string; status: MediaAssetStatus; durationSeconds: number | null; sizeBytes: number; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
 export type TranscriptTimingProvenance = 'asr' | 'aligned' | 'manual';
 export interface TranscriptSegment {
   id: string;

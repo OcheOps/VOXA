@@ -1,12 +1,20 @@
-import type { JsonValue, Meeting, WorkspaceRole } from './domain.js';
+import type { IsoDateTime, JsonValue, MediaAsset, Meeting, RecordingSession, WorkspaceRole } from './domain.js';
 import type { CredentialStatus, CredentialWriteRequest } from './credentials.js';
-import type { MeetingId, UserId, WorkspaceId } from './ids.js';
+import type { MediaAssetId, MeetingId, UserId, WorkspaceId } from './ids.js';
 
 export const API_V1 = {
   health: '/api/v1/health', capabilities: '/api/v1/capabilities', me: '/api/v1/me',
   meetings: '/api/v1/meetings', meeting: '/api/v1/meetings/:meetingId',
   configuration: '/api/v1/configuration', credentials: '/api/v1/credentials',
   credential: '/api/v1/credentials/:provider',
+  meetingRecordings: '/api/v1/meetings/:meetingId/recordings',
+  meetingMedia: '/api/v1/meetings/:meetingId/media',
+  mediaAsset: '/api/v1/media/:mediaAssetId',
+  mediaUpload: '/api/v1/media/:mediaAssetId/upload',
+  mediaChunk: '/api/v1/media/:mediaAssetId/chunks/:index',
+  mediaFinalize: '/api/v1/media/:mediaAssetId/finalize',
+  mediaPlayback: '/api/v1/media/:mediaAssetId/playback',
+  mediaContent: '/api/v1/media/:mediaAssetId/content',
 } as const;
 
 export interface HealthResponse { status: 'ok'; apiVersion: 'v1'; serverVersion: string; }
@@ -27,6 +35,36 @@ export interface CurrentWorkspace { id: WorkspaceId; name: string; }
 export interface MeResponse { user: CurrentUser; workspace: CurrentWorkspace; role: WorkspaceRole; }
 /** `details.reason` of a 409 `conflict` when a caller belongs to several workspaces and selection is not yet supported. */
 export const WORKSPACE_SELECTION_REQUIRED = 'workspace_selection_required' as const;
+
+/**
+ * Chunked, resumable recording upload. A recording is one continuous
+ * encoder stream split into ordered chunks: chunk 0 carries the container
+ * header and chunks are assembled strictly in index order. PUT
+ * `application/octet-stream` bytes to `mediaChunk`; identical retries are
+ * no-ops, different bytes for a stored index are a 409 `chunk_mismatch`.
+ * Finalize requires exactly chunks 0..chunkCount-1 (409 `missing_chunks` /
+ * `unexpected_chunks`) and is idempotent.
+ */
+export interface CreateRecordingRequest { mimeType: string; }
+export interface MediaUpload {
+  mediaAssetId: MediaAssetId;
+  status: MediaAsset['status'];
+  receivedChunks: number[];
+  receivedBytes: number;
+  maxChunkBytes: number;
+  maxTotalBytes: number;
+}
+export interface CreateRecordingResponse { recordingSession: RecordingSession; mediaAsset: MediaAsset; upload: MediaUpload; }
+export interface MediaUploadResponse { upload: MediaUpload; }
+export interface FinalizeMediaRequest { chunkCount: number; durationSeconds?: number | null; }
+export interface MediaAssetResponse { mediaAsset: MediaAsset; }
+export interface MeetingMediaResponse { items: MediaAsset[]; }
+/**
+ * Short-lived signed playback URL (relative to the API origin) for media
+ * elements, which cannot send Authorization headers. It supports HTTP range
+ * requests; request a new one when it expires.
+ */
+export interface MediaPlaybackResponse { url: string; expiresAt: IsoDateTime; }
 
 export interface CursorPage { nextCursor: string | null; hasMore: boolean; }
 export interface MeetingListQuery { cursor?: string; limit?: number; }
@@ -90,4 +128,13 @@ export interface ApiV1Contract {
   listCredentials: Endpoint<'GET', typeof API_V1.credentials, never, CredentialListResponse>;
   updateCredential: Endpoint<'PUT', typeof API_V1.credential, { provider: string; body: CredentialWriteRequest }, CredentialUpdateResponse>;
   deleteCredential: Endpoint<'DELETE', typeof API_V1.credential, { provider: string }, void>;
+  createRecording: Endpoint<'POST', typeof API_V1.meetingRecordings, { meetingId: MeetingId; body: CreateRecordingRequest }, CreateRecordingResponse>;
+  listMeetingMedia: Endpoint<'GET', typeof API_V1.meetingMedia, { meetingId: MeetingId }, MeetingMediaResponse>;
+  getMediaAsset: Endpoint<'GET', typeof API_V1.mediaAsset, { mediaAssetId: MediaAssetId }, MediaAssetResponse>;
+  deleteMediaAsset: Endpoint<'DELETE', typeof API_V1.mediaAsset, { mediaAssetId: MediaAssetId }, void>;
+  getMediaUpload: Endpoint<'GET', typeof API_V1.mediaUpload, { mediaAssetId: MediaAssetId }, MediaUploadResponse>;
+  uploadMediaChunk: Endpoint<'PUT', typeof API_V1.mediaChunk, { mediaAssetId: MediaAssetId; index: number; body: Blob | ArrayBuffer }, MediaUploadResponse>;
+  finalizeMedia: Endpoint<'POST', typeof API_V1.mediaFinalize, { mediaAssetId: MediaAssetId; body: FinalizeMediaRequest }, MediaAssetResponse>;
+  getMediaPlayback: Endpoint<'GET', typeof API_V1.mediaPlayback, { mediaAssetId: MediaAssetId }, MediaPlaybackResponse>;
+  getMediaContent: Endpoint<'GET', typeof API_V1.mediaContent, { mediaAssetId: MediaAssetId; range?: string }, Blob>;
 }

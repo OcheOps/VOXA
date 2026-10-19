@@ -29,8 +29,10 @@ describe.skipIf(!API)('HTTP adapters against the Voxa server', () => {
     expect(me.role).toBe('owner');
     expect(me.workspace.id.length).toBeGreaterThan(0);
     const capabilities = await identity.capabilities();
-    expect(capabilities.mediaStorage.available).toBe(false);
+    // Media storage depends on VOXA_MEDIA_DIR; processing jobs do not exist yet.
+    expect(typeof capabilities.mediaStorage.available).toBe('boolean');
     expect(capabilities.transcription.available).toBe(false);
+    expect(capabilities.summary.available).toBe(false);
   });
 
   test('meeting CRUD and cursor pagination', async () => {

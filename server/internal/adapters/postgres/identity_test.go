@@ -222,7 +222,7 @@ func TestDatabaseAtCredentialsVersionUpgradesToIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := postgres.Migrate(ctx, pool, migrations.Files)
-	if err != nil || len(applied) != 1 || applied[0].Version != 3 {
+	if err != nil || len(applied) != len(mustLoad(t))-2 || applied[0].Version != 3 {
 		t.Fatalf("applied=%#v err=%v", applied, err)
 	}
 	var name string

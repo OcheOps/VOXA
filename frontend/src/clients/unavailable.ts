@@ -40,6 +40,7 @@ const unsupported = (operation: string) => () => Promise.reject(new UnsupportedO
 
 export class UnavailableRecordingClient implements RecordingClient {
   readonly capabilities: RecordingCapabilities = {
+    microphoneCapture: false,
     systemAudioCapture: 'unavailable',
     deviceEnumeration: 'unavailable',
     microphoneHotSwap: 'unavailable',

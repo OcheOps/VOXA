@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { createWebRuntime, type WebRuntime } from './runtime';
 import { ServerCapabilitiesProvider, useAuth, WebRuntimeProvider } from './context';
 import { WebShell } from './WebShell';
+import { useRecordingRecovery } from './recording/hooks';
 
 export const CALLBACK_PATH = '/auth/callback';
 
@@ -69,6 +70,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     default:
       return <Centered title="Loading Voxa…" />;
   }
+}
+
+/** Resumes recording uploads left by earlier pages (runs after sign-in). */
+function RecordingRecovery() {
+  useRecordingRecovery();
+  return null;
 }
 
 /** Starts the session once: completes a redirect on the callback route, otherwise boots normally. */
@@ -130,6 +137,7 @@ export function WebApp({ children }: { children: React.ReactNode }) {
             <RecordingStateProvider>
               <SidebarProvider>
                 <TooltipProvider>
+                  <RecordingRecovery />
                   <WebShell>{children}</WebShell>
                 </TooltipProvider>
               </SidebarProvider>

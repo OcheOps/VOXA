@@ -128,7 +128,7 @@ describe.skipIf(!SERVER_BIN || !DATABASE_URL)('Voxa Web OIDC against the real se
 
   function runtime(replaced: string[]): WebRuntime {
     return createWebRuntime({
-      config: { apiBaseUrl: apiUrl, auth: { mode: 'oidc', issuer, clientId: AUDIENCE, scope: 'openid profile email', redirectUri: `${ORIGIN}/auth/callback`, bearer: 'access_token' } },
+      config: { apiBaseUrl: apiUrl, auth: { mode: 'oidc', issuer, clientId: AUDIENCE, scope: 'openid profile email', redirectUri: `${ORIGIN}/auth/callback`, bearer: 'access_token' }, recordingNotice: 'notice' },
       origin: ORIGIN,
       sessionStorage,
       currentPath: () => '/meeting-details?id=abc',

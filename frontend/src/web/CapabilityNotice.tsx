@@ -11,9 +11,11 @@ export function CapabilityNotice() {
   const client = useVoxaClient();
   const server = useServerCapabilities();
   const missing: string[] = [];
-  const browserRecording = client.recording.capabilities.deviceEnumeration !== 'unavailable' || client.recording.capabilities.tabCapture;
-  if (!browserRecording) missing.push('recording');
-  if (!server?.mediaStorage.available || !client.media.capabilities.urlPlayback) missing.push('audio storage and playback');
+  // Recording needs both a browser that can capture and a server that stores media.
+  const mediaStorage = Boolean(server?.mediaStorage.available && client.media.capabilities.urlPlayback);
+  if (!client.recording.capabilities.microphoneCapture || !mediaStorage) missing.push('recording');
+  if (!mediaStorage) missing.push('audio storage and playback');
+  if (client.recording.capabilities.microphoneCapture && !client.recording.capabilities.tabCapture) missing.push('tab and system audio capture');
   if (!server?.transcription.available || client.transcription.capabilities.execution === 'unavailable') missing.push('transcription');
   if (!server?.summary.available || client.summaries.capabilities.execution === 'unavailable') missing.push('summaries');
   if (missing.length === 0) return null;

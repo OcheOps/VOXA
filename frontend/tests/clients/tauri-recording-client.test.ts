@@ -51,6 +51,7 @@ describe('TauriRecordingClient commands', () => {
     const client = new TauriRecordingClient();
 
     expect(client.capabilities).toEqual({
+      microphoneCapture: true,
       systemAudioCapture: 'native',
       deviceEnumeration: 'input-and-output',
       microphoneHotSwap: 'automatic',

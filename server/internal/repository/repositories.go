@@ -38,6 +38,28 @@ type ConfigurationRepository interface {
 	Update(context.Context, domain.WorkspaceID, func(domain.Configuration) (domain.Configuration, error)) (domain.Configuration, error)
 }
 
+// MediaRepository stores recording sessions and media asset metadata. Media
+// bytes live in a mediastore.Store; StorageKey links the two internally.
+type MediaRepository interface {
+	// CreateRecording atomically stores a new session and its uploading asset.
+	CreateRecording(ctx context.Context, session domain.RecordingSession, asset domain.MediaAsset) error
+	GetAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, error)
+	// ListMeetingAssets returns a meeting's assets ordered by (created_at, id).
+	ListMeetingAssets(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.MediaAsset, error)
+	// TouchUpload records upload activity on an uploading asset.
+	TouchUpload(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, at time.Time) error
+	// CompleteUpload marks an uploading asset ready and its session completed.
+	// It returns ErrConflict when the asset is no longer uploading.
+	CompleteUpload(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, sizeBytes int64, chunkCount int, durationSeconds *float64, at time.Time) (domain.MediaAsset, error)
+	// FailUpload marks an uploading asset (and its session) failed; a no-op otherwise.
+	FailUpload(ctx context.Context, assetID domain.MediaAssetID, at time.Time) error
+	DeleteAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, error)
+	// ListStaleUploads returns uploading assets (any workspace) with no activity since before.
+	ListStaleUploads(ctx context.Context, before time.Time) ([]domain.MediaAsset, error)
+	// AssetStatusByStorageKey supports orphan cleanup; ErrNotFound when no asset uses the key.
+	AssetStatusByStorageKey(ctx context.Context, storageKey string) (domain.MediaAssetStatus, error)
+}
+
 // IdentityRepository stores Voxa users, workspace memberships and the
 // one-time deployment bootstrap.
 type IdentityRepository interface {

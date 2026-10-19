@@ -38,13 +38,18 @@ type Server struct {
 	resolver      WorkspaceResolver
 	logger        *slog.Logger
 	version       string
+	media         *application.MediaService
+	signer        *PlaybackSigner
 }
 
-func NewHandler(meetings *application.MeetingService, configuration *application.ConfigurationService, credentials *application.CredentialService, authenticator Authenticator, resolver WorkspaceResolver, version string, logger *slog.Logger) http.Handler {
+func NewHandler(meetings *application.MeetingService, configuration *application.ConfigurationService, credentials *application.CredentialService, authenticator Authenticator, resolver WorkspaceResolver, version string, logger *slog.Logger, options ...Option) http.Handler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	s := &Server{meetings: meetings, configuration: configuration, credentials: credentials, authenticator: authenticator, resolver: resolver, logger: logger, version: version}
+	for _, option := range options {
+		option(s)
+	}
 	mux := http.NewServeMux()
 	// Public: liveness and non-sensitive capability discovery.
 	mux.HandleFunc("GET /api/v1/health", s.health)
@@ -61,6 +66,7 @@ func NewHandler(meetings *application.MeetingService, configuration *application
 	mux.HandleFunc("GET /api/v1/credentials", s.authorize(s.listCredentials))
 	mux.HandleFunc("PUT /api/v1/credentials/{provider}", s.authorize(s.updateCredential))
 	mux.HandleFunc("DELETE /api/v1/credentials/{provider}", s.authorize(s.deleteCredential))
+	s.registerMedia(mux)
 	return s.requestID(securityHeaders(s.accessLog(s.recover(mux))))
 }
 
@@ -68,7 +74,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", APIVersion: "v1", ServerVersion: s.version})
 }
 func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
-	response := capabilitiesResponse{APIVersion: "v1", MediaStorage: availability{Available: false}, Transcription: providerAvailability{Available: false, Providers: []string{}}, Summary: providerAvailability{Available: false, Providers: []string{}}}
+	response := capabilitiesResponse{APIVersion: "v1", MediaStorage: availability{Available: s.media != nil}, Transcription: providerAvailability{Available: false, Providers: []string{}}, Summary: providerAvailability{Available: false, Providers: []string{}}}
 	response.Configuration.ServerManaged = true
 	response.Configuration.CredentialManagement = true
 	writeJSON(w, http.StatusOK, response)

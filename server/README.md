@@ -81,6 +81,8 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | `VOXA_BOOTSTRAP_OIDC_SUBJECT` | unset | `oidc` mode: only this `sub` may bootstrap the deployment (recommended). |
 | `VOXA_BOOTSTRAP_WORKSPACE_ID` | unset | `oidc` mode: bootstrap adopts this workspace (e.g. `workspace-dev`, to keep development data). |
 | `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | `development` mode only: the fixed workspace. Ignored in `oidc` mode. |
+| `VOXA_MEDIA_DIR` | unset | Enables media storage (recording uploads and playback) under this directory (outside the source tree, e.g. `/var/lib/voxa/media`). Unset means media is unavailable and capabilities say so. |
+| `VOXA_MEDIA_MAX_RECORDING_MB` | `1024` | Maximum size of one recording. Chunks are capped at 8 MiB and stale uploads expire after 48 h (fixed). |
 | `VOXA_ALLOWED_ORIGINS` | unset | Comma-separated exact browser origins allowed to call the API cross-origin (Voxa Web), e.g. `https://voxa.example.com,http://localhost:3118`. Unset means no CORS headers at all. `*` is rejected. See `docs/voxa-web.md`. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
 | `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
@@ -166,6 +168,17 @@ workspaces. Every response sends `nosniff`, `no-store` and
 `Referrer-Policy: no-referrer`. CORS headers are sent only for origins
 listed in `VOXA_ALLOWED_ORIGINS`: exact origins, no credentials mode,
 preflight answered before authentication.
+
+## Media
+
+With `VOXA_MEDIA_DIR` set, the server accepts chunked, resumable recording
+uploads (`POST /api/v1/meetings/{id}/recordings`,
+`PUT /api/v1/media/{id}/chunks/{n}`, `POST …/finalize`). Recordings are
+assembled into opaque files, recorded as MediaAssets (migration 0004), and
+streamed with HTTP range support: by bearer at `…/content`, or through a
+2-hour signed URL from `…/playback` for `<audio>` elements. Cleanup runs at
+startup and hourly; it fails stale uploads and removes orphans, never ready
+recordings. Full design: [`docs/voxa-web-recording.md`](../docs/voxa-web-recording.md).
 
 ## Migrations
 

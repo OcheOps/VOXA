@@ -28,6 +28,7 @@ type storage struct {
 	credentials    repository.CredentialRepository
 	// identities is nil in memory mode (OIDC requires PostgreSQL).
 	identities repository.IdentityRepository
+	media      repository.MediaRepository
 	ready      func(context.Context) error
 	close      func()
 }
@@ -48,6 +49,7 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 			meetings:       memory.NewMeetingRepository(),
 			configurations: memory.NewConfigurationRepository(defaults),
 			credentials:    memory.NewCredentialRepository(),
+			media:          memory.NewMediaRepository(),
 			ready:          func(context.Context) error { return nil },
 			close:          func() {},
 		}, nil
@@ -111,6 +113,7 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 		configurations: postgres.NewConfigurationRepository(pool, defaults),
 		credentials:    postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing)),
 		identities:     postgres.NewIdentityRepository(pool),
+		media:          postgres.NewMediaRepository(pool),
 		ready:          pool.Ping,
 		close:          pool.Close,
 	}, nil

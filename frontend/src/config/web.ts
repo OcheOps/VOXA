@@ -21,7 +21,11 @@ export type WebAuthConfig =
 export interface WebConfig {
   apiBaseUrl: string;
   auth: WebAuthConfig;
+  /** Reminder shown while recording; override with NEXT_PUBLIC_VOXA_RECORDING_NOTICE. */
+  recordingNotice: string;
 }
+
+export const DEFAULT_RECORDING_NOTICE = 'You are responsible for telling participants they are being recorded and obtaining any consent the law requires.';
 
 export class WebConfigError extends Error {
   constructor(message: string) {
@@ -38,6 +42,7 @@ export interface WebEnvironment {
   NEXT_PUBLIC_VOXA_OIDC_SCOPE?: string;
   NEXT_PUBLIC_VOXA_OIDC_REDIRECT_URI?: string;
   NEXT_PUBLIC_VOXA_OIDC_BEARER?: string;
+  NEXT_PUBLIC_VOXA_RECORDING_NOTICE?: string;
 }
 
 // Each variable is written out literally so Next.js inlines it at build time.
@@ -50,6 +55,7 @@ export function buildEnvironment(): WebEnvironment {
     NEXT_PUBLIC_VOXA_OIDC_SCOPE: process.env.NEXT_PUBLIC_VOXA_OIDC_SCOPE,
     NEXT_PUBLIC_VOXA_OIDC_REDIRECT_URI: process.env.NEXT_PUBLIC_VOXA_OIDC_REDIRECT_URI,
     NEXT_PUBLIC_VOXA_OIDC_BEARER: process.env.NEXT_PUBLIC_VOXA_OIDC_BEARER,
+    NEXT_PUBLIC_VOXA_RECORDING_NOTICE: process.env.NEXT_PUBLIC_VOXA_RECORDING_NOTICE,
   };
 }
 
@@ -80,9 +86,10 @@ export function readWebConfig(env: WebEnvironment, origin: string): WebConfig {
   const api = absoluteURL('NEXT_PUBLIC_VOXA_API_URL', env.NEXT_PUBLIC_VOXA_API_URL, false);
   const apiBaseUrl = api.toString().replace(/\/+$/, '');
   const mode = (env.NEXT_PUBLIC_VOXA_AUTH_MODE ?? 'oidc').trim();
+  const recordingNotice = env.NEXT_PUBLIC_VOXA_RECORDING_NOTICE?.trim() || DEFAULT_RECORDING_NOTICE;
 
   if (mode === 'development') {
-    return { apiBaseUrl, auth: { mode: 'development' } };
+    return { apiBaseUrl, auth: { mode: 'development' }, recordingNotice };
   }
   if (mode !== 'oidc') {
     throw new WebConfigError('NEXT_PUBLIC_VOXA_AUTH_MODE must be "oidc" or "development"');
@@ -107,5 +114,5 @@ export function readWebConfig(env: WebEnvironment, origin: string): WebConfig {
   if (bearer !== 'access_token' && bearer !== 'id_token') {
     throw new WebConfigError('NEXT_PUBLIC_VOXA_OIDC_BEARER must be "access_token" or "id_token"');
   }
-  return { apiBaseUrl, auth: { mode: 'oidc', issuer, clientId, scope, redirectUri, bearer } };
+  return { apiBaseUrl, auth: { mode: 'oidc', issuer, clientId, scope, redirectUri, bearer }, recordingNotice };
 }

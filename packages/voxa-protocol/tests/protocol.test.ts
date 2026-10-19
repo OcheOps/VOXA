@@ -18,6 +18,7 @@ import {
   type MeetingListResponse,
   type ApiErrorResponse,
   type MeResponse,
+  type CreateRecordingResponse,
   WORKSPACE_SELECTION_REQUIRED,
   type Summary,
   type TranscriptSegment,
@@ -137,6 +138,14 @@ describe('API v1 surface', () => {
       configuration: '/api/v1/configuration',
       credentials: '/api/v1/credentials',
       credential: '/api/v1/credentials/:provider',
+      meetingRecordings: '/api/v1/meetings/:meetingId/recordings',
+      meetingMedia: '/api/v1/meetings/:meetingId/media',
+      mediaAsset: '/api/v1/media/:mediaAssetId',
+      mediaUpload: '/api/v1/media/:mediaAssetId/upload',
+      mediaChunk: '/api/v1/media/:mediaAssetId/chunks/:index',
+      mediaFinalize: '/api/v1/media/:mediaAssetId/finalize',
+      mediaPlayback: '/api/v1/media/:mediaAssetId/playback',
+      mediaContent: '/api/v1/media/:mediaAssetId/content',
     });
   });
 
@@ -189,6 +198,19 @@ describe('authenticated identity', () => {
   });
 });
 
+describe('media protocol', () => {
+  test('recording creation exposes no storage locations', () => {
+    const response: CreateRecordingResponse = {
+      recordingSession: { id: recordingSessionId('rec_1'), workspaceId: workspaceId('wsp_1'), meetingId: meetingId('mtg_1'), status: 'recording', startedAt: '2026-10-19T10:00:00Z', endedAt: null, createdAt: '2026-10-19T10:00:00Z' },
+      mediaAsset: { id: mediaAssetId('med_1'), workspaceId: workspaceId('wsp_1'), meetingId: meetingId('mtg_1'), recordingSessionId: recordingSessionId('rec_1'), kind: 'audio', mimeType: 'audio/webm;codecs=opus', status: 'uploading', durationSeconds: null, sizeBytes: 0, createdAt: '2026-10-19T10:00:00Z', updatedAt: '2026-10-19T10:00:00Z' },
+      upload: { mediaAssetId: mediaAssetId('med_1'), status: 'uploading', receivedChunks: [], receivedBytes: 0, maxChunkBytes: 8388608, maxTotalBytes: 1073741824 },
+    };
+    const wire = JSON.stringify(response);
+    expect(JSON.parse(wire)).toEqual(response);
+    for (const forbidden of ['storage', 'path', 'folder', 'obj_']) expect(wire).not.toContain(forbidden);
+  });
+});
+
 // Compile-time wire-safety assertions. `tsc` must reject these assignments.
 const safeError: ApiErrorResponse = { error: { code: 'validation', message: 'Invalid request' } };
 void safeError;
@@ -201,3 +223,6 @@ void unsafeSummary;
 // @ts-expect-error Roles are limited to owner and member.
 const unsafeRole: MeResponse['role'] = 'admin';
 void unsafeRole;
+// @ts-expect-error Media assets have no client-visible storage location.
+const leakingAsset: import('../src/index.js').MediaAsset = { storageKey: 'obj_x' } as const;
+void leakingAsset;
