@@ -2,8 +2,10 @@
 
 This document defines the first server-facing domain and HTTP contract. The
 source of truth is `packages/voxa-protocol`; all paths below are rooted at
-`/api/v1`. A Go reference implementation with ephemeral in-memory adapters now
-lives in `server/`; it does not change or replace the TypeScript contract.
+`/api/v1`. A Go reference implementation lives in `server/`, with in-memory
+adapters and PostgreSQL persistence for meetings and configuration (see
+`docs/server-persistence.md`); it does not change or replace the TypeScript
+contract.
 
 ## Package structure
 
@@ -243,7 +245,9 @@ capabilities to/from the shared protocol.
 
 - authentication, membership and active-workspace selection;
 - production API handlers and runtime validation;
-- PostgreSQL or any replacement/migration of desktop SQLite;
+- encrypted/persistent server credential storage (server meetings and
+  configuration persist in PostgreSQL; credentials remain in process memory);
+- any replacement/migration of desktop SQLite;
 - object storage and resumable/chunked media upload;
 - media download, signed URLs and HTTP range playback;
 - transcription, summary, import/transcode and diarization job execution;

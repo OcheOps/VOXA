@@ -1,0 +1,22 @@
+# Development-only PostgreSQL for the Voxa server. The server itself runs on
+# the host (`go run ./cmd/voxa`); Docker is optional and only provides the
+# database. Credentials below are throwaway development values.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: voxa
+      POSTGRES_PASSWORD: voxa-dev
+      POSTGRES_DB: voxa
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - voxa-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voxa -d voxa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  voxa-postgres:

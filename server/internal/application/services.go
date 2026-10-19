@@ -65,6 +65,13 @@ func randomMeetingID() (domain.MeetingID, error) {
 	return domain.MeetingID("mtg_" + hex.EncodeToString(raw[:])), nil
 }
 
+// timestamp returns the current UTC time at microsecond precision, the
+// resolution PostgreSQL timestamptz stores, so responses match later reads
+// regardless of the repository adapter.
+func (s *MeetingService) timestamp() time.Time {
+	return s.now().UTC().Truncate(time.Microsecond)
+}
+
 func (s *MeetingService) Create(ctx context.Context, workspaceID domain.WorkspaceID, title string) (domain.Meeting, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -77,7 +84,7 @@ func (s *MeetingService) Create(ctx context.Context, workspaceID domain.Workspac
 	if err != nil {
 		return domain.Meeting{}, &Error{Code: Internal, Err: err}
 	}
-	now := s.now().UTC()
+	now := s.timestamp()
 	meeting := domain.Meeting{ID: id, WorkspaceID: workspaceID, Title: title, Status: domain.MeetingCreated, CreatedAt: now, UpdatedAt: now}
 	if err := s.repository.Create(ctx, meeting); errors.Is(err, repository.ErrConflict) {
 		return domain.Meeting{}, &Error{Code: Conflict, Err: err}
@@ -116,8 +123,10 @@ func (s *MeetingService) Update(ctx context.Context, workspaceID domain.Workspac
 		}
 		meeting.Title = clean
 	}
-	meeting.UpdatedAt = s.now().UTC()
-	if err := s.repository.Update(ctx, meeting); err != nil {
+	meeting.UpdatedAt = s.timestamp()
+	if err := s.repository.Update(ctx, meeting); errors.Is(err, repository.ErrNotFound) {
+		return domain.Meeting{}, &Error{Code: NotFound, Err: err}
+	} else if err != nil {
 		return domain.Meeting{}, &Error{Code: Internal, Err: err}
 	}
 	return meeting, nil
