@@ -26,6 +26,8 @@ import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
 import { type MediaImportSelection, useVoxaClient } from '@/clients'
+import { isWebRuntime } from '@/config/runtime'
+import { WebRootLayout } from '@/web/WebApp'
 
 
 const sourceSans3 = Source_Sans_3({
@@ -64,7 +66,18 @@ function ConditionalImportDialog({
 
 // export { metadata } from './metadata'
 
-export default function RootLayout({
+/**
+ * Selects the composition root for the build-time runtime. The desktop tree
+ * below is unchanged; the web tree mounts no Tauri-dependent providers.
+ */
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  if (isWebRuntime) {
+    return <WebRootLayout fontClassName={sourceSans3.variable}>{children}</WebRootLayout>
+  }
+  return <DesktopRootLayout>{children}</DesktopRootLayout>
+}
+
+function DesktopRootLayout({
   children,
 }: {
   children: React.ReactNode

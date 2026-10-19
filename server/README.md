@@ -81,6 +81,7 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | `VOXA_BOOTSTRAP_OIDC_SUBJECT` | unset | `oidc` mode: only this `sub` may bootstrap the deployment (recommended). |
 | `VOXA_BOOTSTRAP_WORKSPACE_ID` | unset | `oidc` mode: bootstrap adopts this workspace (e.g. `workspace-dev`, to keep development data). |
 | `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | `development` mode only: the fixed workspace. Ignored in `oidc` mode. |
+| `VOXA_ALLOWED_ORIGINS` | unset | Comma-separated exact browser origins allowed to call the API cross-origin (Voxa Web), e.g. `https://voxa.example.com,http://localhost:3118`. Unset means no CORS headers at all. `*` is rejected. See `docs/voxa-web.md`. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
 | `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
 | `VOXA_CREDENTIAL_KEY_VERSION` | unset | **Required with PostgreSQL.** Non-secret identifier stored with each credential, e.g. `2026-10`. Pattern `[A-Za-z0-9][A-Za-z0-9._-]{0,31}`. |
@@ -161,8 +162,10 @@ The first identity to authenticate against an uninitialized deployment
 becomes owner of the default workspace. Later identities get no access
 until an operator grants it (see the SQL in
 `docs/server-authentication.md`). Clients cannot choose or create
-workspaces. Every response sends `nosniff` and `no-store`, and no CORS
-headers.
+workspaces. Every response sends `nosniff`, `no-store` and
+`Referrer-Policy: no-referrer`. CORS headers are sent only for origins
+listed in `VOXA_ALLOWED_ORIGINS`: exact origins, no credentials mode,
+preflight answered before authentication.
 
 ## Migrations
 

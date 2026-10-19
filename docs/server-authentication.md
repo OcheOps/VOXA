@@ -193,9 +193,11 @@ that they never appear in logs or response bodies.
 ## 9. HTTP hardening
 
 All API responses carry `X-Content-Type-Options: nosniff`,
-`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No CORS
-headers are emitted, so cross-origin browser access is denied until an
-explicit origin allow-list is added together with an HTTP client or PWA.
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Cross-origin
+browser access is limited to the exact origins in `VOXA_ALLOWED_ORIGINS`
+(unset means none). There is no wildcard and no credentials mode, and
+preflights are answered before authentication. The browser client (Voxa
+Web, Authorization Code + PKCE) is described in `docs/voxa-web.md`.
 
 ## 10. Managing members today (interim)
 

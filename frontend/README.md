@@ -2,6 +2,16 @@
 
 A modern desktop application for recording, transcribing, and analyzing meetings with AI assistance. Built with Next.js and Tauri for a native desktop experience.
 
+## Runtimes
+
+This app builds in two modes from one codebase:
+
+- **Desktop** (default): Tauri + native Rust core. All commands below.
+- **Web** (Voxa Web): the same UI against the Voxa Go API, with OIDC sign-in.
+  Use `pnpm run dev:web` / `pnpm run build:web` (settings in
+  `.env.web.local`, see `.env.web.example`). See
+  [`docs/voxa-web.md`](../docs/voxa-web.md).
+
 ## Features
 
 - Real-time audio recording from both microphone and system audio

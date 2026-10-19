@@ -69,8 +69,19 @@ func serve(logger *slog.Logger, databaseURL string) int {
 		serverVersion,
 		logger,
 	)
+	corsPolicy, err := api.ParseAllowedOrigins(os.Getenv("VOXA_ALLOWED_ORIGINS"))
+	if err != nil {
+		logger.Error("invalid VOXA_ALLOWED_ORIGINS", "error", err)
+		return 2
+	}
+	if corsPolicy.Enabled() {
+		logger.Info("browser origins allowed for cross-origin API access", "allowed_origins", corsPolicy.Origins())
+	} else {
+		logger.Info("cross-origin browser access disabled (VOXA_ALLOWED_ORIGINS not set)")
+	}
+
 	root := http.NewServeMux()
-	root.Handle("/", apiHandler)
+	root.Handle("/", api.WithCORS(corsPolicy, apiHandler))
 	// Operational readiness probe, intentionally outside the /api/v1
 	// protocol. /api/v1/health remains process liveness only.
 	root.HandleFunc("GET /readyz", readiness(store, logger))

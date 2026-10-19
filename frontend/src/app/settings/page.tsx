@@ -1,5 +1,8 @@
 'use client';
 
+import { isWebRuntime } from '@/config/runtime';
+import { WebSettings } from '@/web/WebSettings';
+
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -23,6 +26,10 @@ const TABS = [
 ] as const;
 
 export default function SettingsPage() {
+  return isWebRuntime ? <WebSettings /> : <DesktopSettingsPage />;
+}
+
+function DesktopSettingsPage() {
   const router = useRouter();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
   const { configuration: configurationClient } = useVoxaClient();

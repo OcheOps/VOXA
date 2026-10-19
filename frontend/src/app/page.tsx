@@ -1,5 +1,8 @@
 'use client';
 
+import { isWebRuntime } from '@/config/runtime';
+import { WebHome } from '@/web/WebHome';
+
 import { useState, useEffect } from 'react';
 import { RecordingControls } from '@/components/RecordingControls';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -22,6 +25,10 @@ import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 
 export default function Home() {
+  return isWebRuntime ? <WebHome /> : <DesktopHome />;
+}
+
+function DesktopHome() {
   // Local page state (not moved to contexts)
   const [isRecording, setIsRecordingState] = useState(false);
   const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);

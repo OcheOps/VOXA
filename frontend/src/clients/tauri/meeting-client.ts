@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   CreateMeetingInput,
   CreateMeetingResult,
+  MeetingCapabilities,
   MeetingClient,
   MeetingDetails,
   MeetingListItem,
@@ -10,6 +11,12 @@ import type {
 import type { MeetingMetadata, PaginatedTranscriptsResponse } from '@/types';
 
 export class TauriMeetingClient implements MeetingClient {
+  readonly capabilities: MeetingCapabilities = {
+    transcripts: true,
+    transcriptSearch: true,
+    createWithTranscripts: true,
+  };
+
   list(): Promise<MeetingListItem[]> {
     return invoke('api_get_meetings');
   }

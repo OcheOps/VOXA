@@ -21,6 +21,10 @@ whisper.cpp/
 whisper-server*
 whisper-server-package/
 
+# Voxa Web local settings
+.env.web
+.env.web.local
+
 # testing
 /coverage
 /dist

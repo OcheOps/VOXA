@@ -1,6 +1,8 @@
 "use client"
 import { useSidebar } from "@/components/Sidebar/SidebarProvider";
 import { useState, useEffect, useCallback, Suspense } from "react";
+import { isWebRuntime } from "@/config/runtime";
+import { WebMeetingDetail } from "@/web/WebMeetingDetail";
 import { MeetingSummary, Transcript } from "@/types";
 import PageContent from "./page-content";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -293,6 +295,10 @@ function MeetingDetailsContent() {
 }
 
 export default function MeetingDetails() {
+  return isWebRuntime ? <WebMeetingDetail /> : <DesktopMeetingDetails />;
+}
+
+function DesktopMeetingDetails() {
   return (
     <Suspense fallback={
       <div className="flex items-center justify-center h-screen">

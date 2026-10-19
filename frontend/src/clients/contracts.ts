@@ -31,7 +31,17 @@ export interface CreateMeetingResult {
   meeting_id: string;
 }
 
+export interface MeetingCapabilities {
+  /** Meetings carry transcript segments readable through this client. */
+  transcripts: boolean;
+  /** Full-text transcript search is available. */
+  transcriptSearch: boolean;
+  /** `create` accepts transcripts and a native folder path, not only a title. */
+  createWithTranscripts: boolean;
+}
+
 export interface MeetingClient {
+  readonly capabilities: MeetingCapabilities;
   list(): Promise<MeetingListItem[]>;
   searchTranscripts(query: string): Promise<TranscriptSearchResult[]>;
   get(meetingId: string): Promise<MeetingDetails>;
@@ -172,7 +182,7 @@ export interface TranscriptionClient {
 export type TranscriptionProvider = 'localWhisper' | 'parakeet';
 
 export interface TranscriptionCapabilities {
-  execution: 'local' | 'remote';
+  execution: 'local' | 'remote' | 'unavailable';
   modelManagement: boolean;
   modelDownload: boolean;
   retranscription: boolean;
@@ -305,7 +315,7 @@ export type SummaryProvider =
   | 'custom-openai';
 
 export interface SummaryCapabilities {
-  execution: 'local' | 'remote' | 'local-and-remote';
+  execution: 'local' | 'remote' | 'local-and-remote' | 'unavailable';
   asynchronousJobs: boolean;
   polling: boolean;
   cancellation: boolean;
@@ -491,6 +501,41 @@ export interface ConfigurationClient {
   saveNotificationPreferences(preferences: NotificationPreferences): Promise<void>;
 }
 
+/** Provider credential metadata. Secrets are write-only and never read back. */
+export interface CredentialStatus {
+  provider: string;
+  configured: boolean;
+}
+
+/** Server-held, write-only provider credentials (web runtime). */
+export interface CredentialClient {
+  list(): Promise<CredentialStatus[]>;
+  set(provider: string, secret: string): Promise<CredentialStatus>;
+  remove(provider: string): Promise<void>;
+}
+
+/** Workspace defaults stored by the Voxa server. */
+export interface WorkspaceSettings {
+  transcription: { provider: string; model: string; language: string; translateToEnglish: boolean };
+  summary: { provider: string; model: string; outputLanguage: string; templateId: string | null; autoGenerate: boolean };
+  retainMedia: boolean;
+  analyticsEnabled: boolean;
+  processingCompleteNotifications: boolean;
+}
+
+export interface WorkspaceSettingsPatch {
+  transcription?: Partial<WorkspaceSettings['transcription']>;
+  summary?: Partial<WorkspaceSettings['summary']>;
+  retainMedia?: boolean;
+  analyticsEnabled?: boolean;
+  processingCompleteNotifications?: boolean;
+}
+
+export interface WorkspaceSettingsClient {
+  get(): Promise<WorkspaceSettings>;
+  update(patch: WorkspaceSettingsPatch): Promise<WorkspaceSettings>;
+}
+
 export interface VoxaClient {
   meetings: MeetingClient;
   recording: RecordingClient;
@@ -498,4 +543,8 @@ export interface VoxaClient {
   summaries: SummaryClient;
   media: MediaClient;
   configuration: ConfigurationClient;
+  /** Present only where a server stores credentials (web). Desktop keeps keys in its own preferences. */
+  credentials?: CredentialClient;
+  /** Present only where workspace defaults live on a server (web). */
+  workspaceSettings?: WorkspaceSettingsClient;
 }
