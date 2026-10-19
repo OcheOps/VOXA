@@ -44,6 +44,21 @@ func meetingFromDomain(m domain.Meeting) meetingDTO {
 	return meetingDTO{ID: string(m.ID), WorkspaceID: string(m.WorkspaceID), Title: m.Title, Status: string(m.Status), CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: m.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 }
 
+type currentUserDTO struct {
+	ID          string  `json:"id"`
+	Email       *string `json:"email"`
+	DisplayName *string `json:"displayName"`
+}
+type currentWorkspaceDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type meResponse struct {
+	User      currentUserDTO      `json:"user"`
+	Workspace currentWorkspaceDTO `json:"workspace"`
+	Role      string              `json:"role"`
+}
+
 type createMeetingRequest struct {
 	Title string `json:"title"`
 }

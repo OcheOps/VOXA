@@ -189,7 +189,7 @@ func TestMigrationsApplyToEmptyDatabaseAndRerunIsIdempotent(t *testing.T) {
 	if len(applied) != len(before) {
 		t.Fatalf("applied %d migrations, want %d", len(applied), len(before))
 	}
-	for _, table := range []string{"workspaces", "meetings", "workspace_configuration", "workspace_credentials"} {
+	for _, table := range []string{"workspaces", "meetings", "workspace_configuration", "workspace_credentials", "users", "workspace_memberships", "deployment_state"} {
 		if !tableExists(t, pool, table) {
 			t.Fatalf("table %s missing", table)
 		}
@@ -209,7 +209,7 @@ ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(collations, " "); got != "meetings.id=C meetings.workspace_id=C workspace_configuration.workspace_id=C workspace_credentials.workspace_id=C workspaces.id=C" {
+	if got := strings.Join(collations, " "); got != "meetings.id=C meetings.workspace_id=C users.id=C workspace_configuration.workspace_id=C workspace_credentials.workspace_id=C workspace_memberships.workspace_id=C workspaces.id=C" {
 		t.Fatalf("identifier collations = %s", got)
 	}
 
@@ -344,8 +344,8 @@ func TestDatabaseWithMeetingsAndConfigurationUpgradesToCredentials(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 1 || applied[0].Version != 2 {
-		t.Fatalf("upgrade applied %#v, want only version 2", applied)
+	if len(applied) != len(mustLoad(t))-1 || applied[0].Version != 2 {
+		t.Fatalf("upgrade applied %#v, want every migration after 0001", applied)
 	}
 	if got, err := meetings.Get(ctx, repositorytest.WorkspaceA, created.ID); err != nil || got.Title != created.Title {
 		t.Fatalf("meeting after upgrade = %#v err=%v", got, err)
@@ -359,4 +359,13 @@ func TestDatabaseWithMeetingsAndConfigurationUpgradesToCredentials(t *testing.T)
 	if again, err := postgres.Migrate(ctx, pool, migrations.Files); err != nil || len(again) != 0 {
 		t.Fatalf("rerun applied=%d err=%v", len(again), err)
 	}
+}
+
+func mustLoad(t *testing.T) []postgres.Migration {
+	t.Helper()
+	loaded, err := postgres.LoadMigrations(migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loaded
 }

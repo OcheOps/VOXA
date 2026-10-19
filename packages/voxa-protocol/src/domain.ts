@@ -6,6 +6,8 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export interface User { id: UserId; email: string; createdAt: IsoDateTime; }
 export interface Workspace { id: WorkspaceId; name: string; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
+/** Workspace membership role. Both roles can use all workspace features; owner is reserved for future administration. */
+export type WorkspaceRole = 'owner' | 'member';
 export type MeetingStatus = 'created' | 'recording' | 'processing' | 'ready' | 'failed';
 export interface Meeting { id: MeetingId; workspaceId: WorkspaceId; title: string; status: MeetingStatus; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
 export type RecordingSessionStatus = 'recording' | 'paused' | 'completed' | 'failed' | 'cancelled';

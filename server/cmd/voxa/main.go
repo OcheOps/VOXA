@@ -14,7 +14,6 @@ import (
 
 	"github.com/OcheOps/voxa/server/internal/api"
 	"github.com/OcheOps/voxa/server/internal/application"
-	"github.com/OcheOps/voxa/server/internal/domain"
 )
 
 const serverVersion = "0.1.0-dev"
@@ -35,28 +34,38 @@ func main() {
 
 func serve(logger *slog.Logger, databaseURL string) int {
 	listenAddress := environment("VOXA_LISTEN_ADDR", ":8080")
-	workspaceValue := strings.TrimSpace(environment("VOXA_DEV_WORKSPACE_ID", "workspace-dev"))
-	if workspaceValue == "" {
-		logger.Error("VOXA_DEV_WORKSPACE_ID must not be blank")
+	authSettings, err := loadAuthConfig(os.Getenv)
+	if err != nil {
+		logger.Error("invalid authentication configuration", "error", err)
 		return 2
 	}
-	workspaceID := domain.WorkspaceID(workspaceValue)
+	if authSettings.mode == authModeOIDC && databaseURL == "" {
+		logger.Error("VOXA_AUTH_MODE=oidc requires VOXA_DATABASE_URL: users, memberships and bootstrap state must persist")
+		return 2
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := openStorage(ctx, logger, os.Getenv, databaseURL, workspaceID)
+	store, err := openStorage(ctx, logger, os.Getenv, databaseURL, authSettings.devWorkspace)
 	if err != nil {
 		logger.Error("storage startup failed", "error", err)
 		return 1
 	}
 	defer store.close()
 
+	authenticator, resolver, err := openAuth(ctx, logger, authSettings, store)
+	if err != nil {
+		logger.Error("authentication startup failed", "error", err)
+		return 1
+	}
+
 	apiHandler := api.NewHandler(
 		application.NewMeetingService(store.meetings),
 		application.NewConfigurationService(store.configurations, store.credentials),
 		application.NewCredentialService(store.credentials),
-		workspaceID,
+		authenticator,
+		resolver,
 		serverVersion,
 		logger,
 	)
@@ -87,7 +96,7 @@ func serve(logger *slog.Logger, databaseURL string) int {
 		}
 	}()
 
-	logger.Info("starting Voxa server", "address", listenAddress, "development_workspace_id", workspaceID, "storage_backend", store.backend, "version", serverVersion)
+	logger.Info("starting Voxa server", "address", listenAddress, "auth_mode", authSettings.mode, "storage_backend", store.backend, "version", serverVersion)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped unexpectedly", "error", err)
 		return 1

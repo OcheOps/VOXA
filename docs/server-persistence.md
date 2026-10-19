@@ -135,6 +135,16 @@ positions compare exactly.
 nonce and key version per `(workspace_id, provider)`. There is no plaintext
 column.
 
+`0003_identity.sql` adds:
+- `workspaces.name`, defaulting to "Default workspace";
+- `users`, with an opaque `id` and `UNIQUE (issuer, subject)`;
+- `workspace_memberships`, with primary key `(workspace_id, user_id)` and
+  role `owner` or `member`. Deleting a user or workspace cascades only to
+  its membership rows;
+- the single-row `deployment_state` bootstrap record, with no foreign keys.
+
+See `docs/server-authentication.md`.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to
@@ -171,10 +181,11 @@ already verifies connectivity, migrations, and bootstrap before the listener
 opens. An operational `GET /readyz` (outside `/api/v1`, not part of the
 protocol) pings the pool and returns `503` when PostgreSQL is unreachable.
 
-## Development workspace bootstrap (temporary)
+## Workspace resolution
 
-The server ensures that the configured `VOXA_DEV_WORKSPACE_ID` exists in
-`workspaces` at startup, and it scopes every request to that ID. Clients
-cannot create workspaces or choose a scope. This is a placeholder until
-authentication and membership exist. Changing the variable switches to a
-different, isolated workspace and leaves the old rows in place.
+In `oidc` mode, workspaces come from memberships. The first authenticated
+identity bootstraps the default workspace in one transaction (see
+`docs/server-authentication.md`). In `development` mode, the server ensures
+that `VOXA_DEV_WORKSPACE_ID` exists at startup and scopes every request to
+it. To keep development data when switching to OIDC, set
+`VOXA_BOOTSTRAP_WORKSPACE_ID` to that ID before the first login.

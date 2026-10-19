@@ -31,10 +31,12 @@ const (
 type Error struct {
 	Code    ErrorCode
 	Details map[string]any
-	// Op names the failed use case (e.g. "meetings.list") for operator logs.
-	// It is never sent to clients.
-	Op  string
-	Err error
+	// Op names the failed use case (e.g. "meetings.list") and Category a
+	// safe failure class (e.g. "not_a_member") for operator logs. Neither is
+	// ever sent to clients.
+	Op       string
+	Category string
+	Err      error
 }
 
 func (e *Error) Error() string { return string(e.Code) }

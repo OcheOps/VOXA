@@ -26,11 +26,15 @@ type storage struct {
 	meetings       repository.MeetingRepository
 	configurations repository.ConfigurationRepository
 	credentials    repository.CredentialRepository
-	ready          func(context.Context) error
-	close          func()
+	// identities is nil in memory mode (OIDC requires PostgreSQL).
+	identities repository.IdentityRepository
+	ready      func(context.Context) error
+	close      func()
 }
 
-func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) string, databaseURL string, workspaceID domain.WorkspaceID) (*storage, error) {
+// openStorage selects and initializes repositories. ensureWorkspace, when
+// non-empty, is created if missing (development mode's fixed workspace).
+func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) string, databaseURL string, ensureWorkspace domain.WorkspaceID) (*storage, error) {
 	defaults := application.DefaultConfiguration()
 
 	if databaseURL == "" {
@@ -75,12 +79,14 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 	}
 	logger.Info("database schema is up to date", "applied_this_start", len(applied))
 
-	created, err := postgres.EnsureWorkspace(startupCtx, pool, workspaceID)
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("bootstrap development workspace: %w", err)
+	if ensureWorkspace != "" {
+		created, err := postgres.EnsureWorkspace(startupCtx, pool, ensureWorkspace)
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("bootstrap development workspace: %w", err)
+		}
+		logger.Info("development workspace ready", "development_workspace_id", ensureWorkspace, "created", created)
 	}
-	logger.Info("development workspace ready", "development_workspace_id", workspaceID, "created", created)
 
 	// Key versions are non-secret metadata (stored in plaintext beside each
 	// row), so they are safe to log.
@@ -104,6 +110,7 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 		meetings:       postgres.NewMeetingRepository(pool),
 		configurations: postgres.NewConfigurationRepository(pool, defaults),
 		credentials:    postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing)),
+		identities:     postgres.NewIdentityRepository(pool),
 		ready:          pool.Ping,
 		close:          pool.Close,
 	}, nil

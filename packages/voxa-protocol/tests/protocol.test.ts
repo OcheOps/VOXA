@@ -17,6 +17,8 @@ import {
   type Meeting,
   type MeetingListResponse,
   type ApiErrorResponse,
+  type MeResponse,
+  WORKSPACE_SELECTION_REQUIRED,
   type Summary,
   type TranscriptSegment,
 } from '../src/index.js';
@@ -129,6 +131,7 @@ describe('API v1 surface', () => {
     expect(API_V1).toEqual({
       health: '/api/v1/health',
       capabilities: '/api/v1/capabilities',
+      me: '/api/v1/me',
       meetings: '/api/v1/meetings',
       meeting: '/api/v1/meetings/:meetingId',
       configuration: '/api/v1/configuration',
@@ -164,6 +167,28 @@ describe('API v1 surface', () => {
   });
 });
 
+describe('authenticated identity', () => {
+  test('describes the caller and active workspace without auth artifacts', () => {
+    const response: MeResponse = {
+      user: { id: userId('usr_1'), email: null, displayName: 'Ada' },
+      workspace: { id: workspaceId('wsp_1'), name: 'Default workspace' },
+      role: 'owner',
+    };
+    const wire = JSON.stringify(response);
+    expect(JSON.parse(wire)).toEqual(response);
+    expect(API_V1.me).toBe('/api/v1/me');
+    for (const forbidden of ['token', 'issuer', 'subject', 'claims', 'password']) {
+      expect(wire).not.toContain(forbidden);
+    }
+  });
+
+  test('names the multi-workspace selection conflict', () => {
+    expect(WORKSPACE_SELECTION_REQUIRED).toBe('workspace_selection_required');
+    expect(apiError('unauthorized').error.message).toBe('Authentication required');
+    expect(apiError('forbidden').error.message).toBe('Access forbidden');
+  });
+});
+
 // Compile-time wire-safety assertions. `tsc` must reject these assignments.
 const safeError: ApiErrorResponse = { error: { code: 'validation', message: 'Invalid request' } };
 void safeError;
@@ -173,3 +198,6 @@ void unsafeMask;
 // @ts-expect-error Summary content must be JSON data, not executable values.
 const unsafeSummary: Pick<Summary, 'content'> = { content: () => 'not JSON' };
 void unsafeSummary;
+// @ts-expect-error Roles are limited to owner and member.
+const unsafeRole: MeResponse['role'] = 'admin';
+void unsafeRole;

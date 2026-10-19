@@ -12,6 +12,10 @@ import (
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
+// ErrAlreadyInitialized is returned by IdentityRepository.Bootstrap when the
+// deployment has already been bootstrapped.
+var ErrAlreadyInitialized = errors.New("deployment already initialized")
+
 // ErrUnavailable means the storage backend could not be reached or refused
 // service (connection failure, timeout, shutdown). Callers may retry.
 var ErrUnavailable = errors.New("storage unavailable")
@@ -32,6 +36,25 @@ type MeetingRepository interface {
 type ConfigurationRepository interface {
 	Get(context.Context, domain.WorkspaceID) (domain.Configuration, error)
 	Update(context.Context, domain.WorkspaceID, func(domain.Configuration) (domain.Configuration, error)) (domain.Configuration, error)
+}
+
+// IdentityRepository stores Voxa users, workspace memberships and the
+// one-time deployment bootstrap.
+type IdentityRepository interface {
+	// FindUser returns the user for an external identity or ErrNotFound.
+	FindUser(ctx context.Context, issuer, subject string) (domain.User, error)
+	// UpdateUserProfile replaces mutable profile fields. Identity fields and
+	// the user ID never change.
+	UpdateUserProfile(ctx context.Context, userID domain.UserID, email, displayName *string, at time.Time) error
+	// ListMemberships returns the user's memberships ordered by workspace ID.
+	ListMemberships(ctx context.Context, userID domain.UserID) ([]domain.Membership, error)
+	// Bootstrap atomically creates the first user, the workspace (kept if it
+	// already exists) and an owner membership, and marks the deployment
+	// initialized. It returns ErrAlreadyInitialized if that already happened;
+	// concurrent callers can never both succeed.
+	Bootstrap(ctx context.Context, user domain.User, workspace domain.Workspace) error
+	// IsInitialized reports whether Bootstrap has completed.
+	IsInitialized(ctx context.Context) (bool, error)
 }
 
 // CredentialRepository manages credential metadata and write-only secret

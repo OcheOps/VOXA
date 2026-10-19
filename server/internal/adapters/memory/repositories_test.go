@@ -27,3 +27,9 @@ func TestCredentialRepositoryContract(t *testing.T) {
 		return memory.NewCredentialRepository()
 	})
 }
+
+func TestIdentityRepositoryContract(t *testing.T) {
+	repositorytest.IdentityRepositoryContract(t, func(*testing.T) repository.IdentityRepository {
+		return memory.NewIdentityRepository()
+	})
+}

@@ -1,9 +1,9 @@
-import type { JsonValue, Meeting } from './domain.js';
+import type { JsonValue, Meeting, WorkspaceRole } from './domain.js';
 import type { CredentialStatus, CredentialWriteRequest } from './credentials.js';
-import type { MeetingId, WorkspaceId } from './ids.js';
+import type { MeetingId, UserId, WorkspaceId } from './ids.js';
 
 export const API_V1 = {
-  health: '/api/v1/health', capabilities: '/api/v1/capabilities',
+  health: '/api/v1/health', capabilities: '/api/v1/capabilities', me: '/api/v1/me',
   meetings: '/api/v1/meetings', meeting: '/api/v1/meetings/:meetingId',
   configuration: '/api/v1/configuration', credentials: '/api/v1/credentials',
   credential: '/api/v1/credentials/:provider',
@@ -17,6 +17,17 @@ export interface CapabilitiesResponse {
   summary: { available: boolean; providers: string[] };
   configuration: { serverManaged: boolean; credentialManagement: boolean };
 }
+/**
+ * The authenticated caller and the workspace the request is scoped to.
+ * Authentication itself (bearer tokens) is HTTP transport, not protocol data:
+ * no token, issuer, subject or claim appears here.
+ */
+export interface CurrentUser { id: UserId; email: string | null; displayName: string | null; }
+export interface CurrentWorkspace { id: WorkspaceId; name: string; }
+export interface MeResponse { user: CurrentUser; workspace: CurrentWorkspace; role: WorkspaceRole; }
+/** `details.reason` of a 409 `conflict` when a caller belongs to several workspaces and selection is not yet supported. */
+export const WORKSPACE_SELECTION_REQUIRED = 'workspace_selection_required' as const;
+
 export interface CursorPage { nextCursor: string | null; hasMore: boolean; }
 export interface MeetingListQuery { cursor?: string; limit?: number; }
 export interface MeetingListResponse { items: Meeting[]; page: CursorPage; }
@@ -68,6 +79,7 @@ interface Endpoint<Method extends string, Path extends string, Request, Response
 export interface ApiV1Contract {
   health: Endpoint<'GET', typeof API_V1.health, never, HealthResponse>;
   capabilities: Endpoint<'GET', typeof API_V1.capabilities, never, CapabilitiesResponse>;
+  me: Endpoint<'GET', typeof API_V1.me, never, MeResponse>;
   listMeetings: Endpoint<'GET', typeof API_V1.meetings, MeetingListQuery, MeetingListResponse>;
   createMeeting: Endpoint<'POST', typeof API_V1.meetings, CreateMeetingRequest, CreateMeetingResponse>;
   getMeeting: Endpoint<'GET', typeof API_V1.meeting, { meetingId: MeetingId }, GetMeetingResponse>;

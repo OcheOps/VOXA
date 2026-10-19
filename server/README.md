@@ -5,9 +5,13 @@ When `VOXA_DATABASE_URL` is set, meetings, workspace configuration and
 provider credentials persist in PostgreSQL. Credentials are stored
 **AES-256-GCM encrypted** with a key that never enters the database.
 Without a database URL, everything runs on ephemeral in-memory adapters
-(development only). This is not yet a media or processing service.
+(development only). Requests are authenticated with OIDC bearer tokens and
+scoped to the caller's workspace membership, or, in explicit development
+mode, to one fixed workspace. This is not yet a media or processing service.
 
 Design rationale:
+[`docs/server-authentication.md`](../docs/server-authentication.md) (OIDC,
+bootstrap, membership, roles, endpoints),
 [`docs/server-persistence.md`](../docs/server-persistence.md) (schema,
 migrations, pagination, atomicity, outage classification) and
 [`docs/server-credential-security.md`](../docs/server-credential-security.md)
@@ -37,6 +41,10 @@ net/http middleware and handlers
 - `internal/adapters/postgres` provides pgx/v5 adapters (including the
   encrypted credential repository), the connection pool, workspace bootstrap,
   outage classification, and the migration runner.
+- `internal/auth` provides the `Authenticator` implementations
+  (generic OIDC bearer validation, development identity) and `authtest`, a
+  local OIDC issuer for tests. `internal/application/access.go` holds the
+  workspace resolvers (membership and bootstrap, development).
 - `internal/credentialcrypto` provides AES-256-GCM sealing, AAD
   construction, and the `KeyRing` abstraction.
 - `migrations/` holds versioned `NNNN_description.sql` files, embedded into
@@ -52,6 +60,9 @@ filesystem path is part of a meeting response.
 | --- | --- |
 | `github.com/jackc/pgx/v5` | PostgreSQL driver and `pgxpool` connection pool. No ORM or query generator. |
 | `github.com/jackc/puddle/v2` | pgx's pool implementation; imported directly only to recognize a closed pool as an outage. |
+| `github.com/coreos/go-oidc/v3` | OIDC discovery, JWKS caching and rotation, JWT signature/`iss`/`aud`/`exp`/`nbf` validation. Actively maintained (v3.21.0, 2026-09). |
+| `github.com/go-jose/go-jose/v4` | JOSE implementation used by go-oidc. Imported directly only by the `authtest` test issuer. |
+| `golang.org/x/oauth2` | Indirect dependency of go-oidc. |
 | `jackc/pgpassfile`, `jackc/pgservicefile`, `golang.org/x/sync`, `golang.org/x/text` | Indirect dependencies of pgx. |
 
 Encryption uses only the Go standard library (`crypto/aes`,
@@ -64,7 +75,12 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `VOXA_LISTEN_ADDR` | `:8080` | HTTP listen address. |
-| `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | The single server-controlled workspace every request is scoped to. |
+| `VOXA_AUTH_MODE` | **required** | `oidc` (anything others can reach) or `development` (local only: every request acts as the dev workspace owner). No default. |
+| `VOXA_OIDC_ISSUER` | — | `oidc` mode: issuer URL, exact match with discovery and `iss`. https (http only for loopback). |
+| `VOXA_OIDC_AUDIENCE` | — | `oidc` mode: required `aud` value (client ID or API audience). |
+| `VOXA_BOOTSTRAP_OIDC_SUBJECT` | unset | `oidc` mode: only this `sub` may bootstrap the deployment (recommended). |
+| `VOXA_BOOTSTRAP_WORKSPACE_ID` | unset | `oidc` mode: bootstrap adopts this workspace (e.g. `workspace-dev`, to keep development data). |
+| `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | `development` mode only: the fixed workspace. Ignored in `oidc` mode. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
 | `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
 | `VOXA_CREDENTIAL_KEY_VERSION` | unset | **Required with PostgreSQL.** Non-secret identifier stored with each credential, e.g. `2026-10`. Pattern `[A-Za-z0-9][A-Za-z0-9._-]{0,31}`. |
@@ -77,8 +93,11 @@ after 5s.
 
 ## Startup behavior
 
-Without `VOXA_DATABASE_URL`, the server logs a warning that all data is
-ephemeral and starts on memory adapters.
+`VOXA_AUTH_MODE` is validated first. A missing or invalid mode, missing
+OIDC settings, or `oidc` without `VOXA_DATABASE_URL` exits with status 2.
+
+Without `VOXA_DATABASE_URL` (development only), the server logs a warning
+that all data is ephemeral and starts on memory adapters.
 
 With `VOXA_DATABASE_URL`, these steps run in order, and any failure exits
 non-zero before the listener opens (steps 2–5 share a 30s budget):
@@ -88,15 +107,19 @@ non-zero before the listener opens (steps 2–5 share a 30s budget):
    falls back to plaintext in-memory credentials.
 2. Parse the URL and connect. Verify connectivity with a ping.
 3. Apply pending migrations under an advisory lock, logging each one.
-4. Ensure the `VOXA_DEV_WORKSPACE_ID` row exists in `workspaces`, and log
-   whether it was created.
+4. In `development` mode, ensure the `VOXA_DEV_WORKSPACE_ID` row exists in
+   `workspaces`, and log whether it was created.
 5. Check the key versions referenced by stored credentials. Warn about any
    version that isn't loaded, because those rows can't be decrypted until
    the key is supplied.
 6. Log `credential_backend=postgres-encrypted`, `active_key_version` and
    `loaded_key_versions`. Key versions are non-secret metadata. Keys,
    ciphertexts, nonces and the database URL are never logged.
-7. Serve HTTP.
+7. Set up auth. `development` logs a loud warning. `oidc` runs provider
+   discovery (15s timeout; failure stops startup) and logs the issuer,
+   audience and whether the deployment is initialized. While it isn't, a
+   warning says the first authenticated identity will become owner.
+8. Serve HTTP.
 
 On SIGINT/SIGTERM the server stops accepting connections, drains in-flight
 requests for up to 10s, and then closes the pool.
@@ -122,13 +145,24 @@ template, operation, public code, category, workspace ID, provider (when
 relevant) and a sanitized error chain. Request bodies, headers, query
 strings, secrets, keys and SQL parameters are never logged.
 
-### Development workspace (temporary)
+### Authentication and workspaces
 
-Authentication and membership are deferred. Middleware supplies one
-server-controlled workspace ID to every request. With PostgreSQL, that ID is
-bootstrapped as a real `workspaces` row at startup. The API never accepts a
-workspace override, and clients cannot create workspaces. Auth and
-membership work will replace this.
+Public: `GET /api/v1/health`, `GET /api/v1/capabilities`, `GET /readyz`.
+Everything else (`/api/v1/me`, meetings, configuration, credentials) needs
+`Authorization: Bearer <token>`, and resolves to exactly one workspace
+membership:
+
+- invalid or missing token: `401`;
+- unknown identity or no membership: `403`;
+- several memberships: `409 workspace_selection_required`;
+- identity provider keys unreachable: `503`.
+
+The first identity to authenticate against an uninitialized deployment
+becomes owner of the default workspace. Later identities get no access
+until an operator grants it (see the SQL in
+`docs/server-authentication.md`). Clients cannot choose or create
+workspaces. Every response sends `nosniff` and `no-store`, and no CORS
+headers.
 
 ## Migrations
 
@@ -167,6 +201,7 @@ docker compose up -d postgres        # postgres:17, 127.0.0.1:55432, named volum
 export VOXA_DATABASE_URL='postgres://voxa:voxa-dev@127.0.0.1:55432/voxa?sslmode=disable'
 export VOXA_CREDENTIAL_KEY="$(openssl rand -base64 32)"   # keep it: losing it loses stored credentials
 export VOXA_CREDENTIAL_KEY_VERSION=dev-1
+export VOXA_AUTH_MODE=development   # or oidc + VOXA_OIDC_ISSUER/VOXA_OIDC_AUDIENCE
 go run ./cmd/voxa
 docker compose down                  # keep data;  `down -v` deletes the volume
 ```
@@ -189,13 +224,16 @@ go test ./...          # unit + memory contract tests; no database needed
 go test -race ./...
 ```
 
-Unit tests include AES-GCM/AAD/key-validation tests, credential contract
+Unit tests include OIDC validation against a local in-process issuer
+(discovery, JWKS, key rotation, provider outage; no external provider),
+HTTP auth/membership/isolation tests, bootstrap concurrency tests,
+AES-GCM/AAD/key-validation tests, credential contract
 tests against the memory adapter, outage classification against a pool with
 no reachable server, and HTTP leak tests. None of them need a database.
 
 PostgreSQL integration tests (adapter contracts, encrypted credential rows,
-rotation, tamper/relocation, migrations and upgrades, bootstrap, HTTP
-restart) run only when `VOXA_TEST_DATABASE_URL` is set, and skip cleanly
+rotation, tamper/relocation, identity/bootstrap concurrency, migrations
+and upgrades, OIDC HTTP flow across restart) run only when `VOXA_TEST_DATABASE_URL` is set, and skip cleanly
 otherwise. Each
 test creates and drops its own schema, so the dev database can be used:
 
@@ -206,9 +244,14 @@ VOXA_TEST_DATABASE_URL='postgres://voxa:voxa-dev@127.0.0.1:55432/voxa?sslmode=di
 
 ## Example workflow
 
+In `development` mode no token is needed. In `oidc` mode, add
+`-H "Authorization: Bearer $TOKEN"` (a token from your provider whose `aud`
+matches `VOXA_OIDC_AUDIENCE`) to every request except health and readiness.
+
 ```sh
 curl -s http://localhost:8080/api/v1/health
 curl -s http://localhost:8080/readyz
+curl -s http://localhost:8080/api/v1/me
 
 curl -s -X POST http://localhost:8080/api/v1/meetings \
   -H 'Content-Type: application/json' \
@@ -265,9 +308,13 @@ With PostgreSQL:
   `docs/server-credential-security.md`.
 - Keys come from environment variables. KMS/Vault-backed key rings and
   bulk re-encryption after rotation are not implemented yet.
-- There is no authentication or workspace membership. One configured
-  development workspace serves all requests. Anyone who can reach the API
-  can overwrite or delete (but never read) its credentials.
+- Membership administration (invitations, granting access, workspace
+  selection, OIDC group mapping) is not implemented yet. Only the bootstrap
+  owner gets access automatically. Others are added through SQL, and users
+  with several memberships get `409`.
+- Both roles have the same access. There is no server-side logout or token
+  revocation: tokens are valid until they expire.
+- A development-mode server lets anyone who can reach it act as owner.
 - There are no down migrations. Migrations that cannot run inside a
   transaction (such as `CREATE INDEX CONCURRENTLY`) are not supported yet.
 - Outage classification is conservative. Unrecognized driver failures

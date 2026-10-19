@@ -13,6 +13,7 @@ import (
 	"github.com/OcheOps/voxa/server/internal/adapters/memory"
 	"github.com/OcheOps/voxa/server/internal/api"
 	"github.com/OcheOps/voxa/server/internal/application"
+	"github.com/OcheOps/voxa/server/internal/auth"
 	"github.com/OcheOps/voxa/server/internal/domain"
 )
 
@@ -47,7 +48,7 @@ func newTestHandler(workspaceID string) http.Handler {
 		application.NewMeetingService(meetingRepository),
 		application.NewConfigurationService(configurationRepository, credentialRepository),
 		application.NewCredentialService(credentialRepository),
-		domain.WorkspaceID(workspaceID),
+		auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver(domain.WorkspaceID(workspaceID)),
 		"dev",
 		nil,
 	)
@@ -192,7 +193,7 @@ func TestCredentialLifecycleNeverExposesSecret(t *testing.T) {
 	credentialRepository := memory.NewCredentialRepository()
 	configurationRepository := memory.NewConfigurationRepository(application.DefaultConfiguration())
 	var logOutput bytes.Buffer
-	handler := api.NewHandler(application.NewMeetingService(meetingRepository), application.NewConfigurationService(configurationRepository, credentialRepository), application.NewCredentialService(credentialRepository), "workspace-test", "test", slog.New(slog.NewJSONHandler(&logOutput, nil)))
+	handler := api.NewHandler(application.NewMeetingService(meetingRepository), application.NewConfigurationService(configurationRepository, credentialRepository), application.NewCredentialService(credentialRepository), auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver("workspace-test"), "test", slog.New(slog.NewJSONHandler(&logOutput, nil)))
 	secret := "sk-super-private"
 	set := request(t, handler, http.MethodPut, "/api/v1/credentials/openai", `{"value":"`+secret+`"}`, nil)
 	if set.Code != http.StatusOK || bytes.Contains(set.Body.Bytes(), []byte(secret)) {
@@ -272,7 +273,7 @@ func TestWorkspaceIsolation(t *testing.T) {
 	configurations := memory.NewConfigurationRepository(application.DefaultConfiguration())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	newHandler := func(workspace string) http.Handler {
-		return api.NewHandler(application.NewMeetingService(meetings), application.NewConfigurationService(configurations, credentials), application.NewCredentialService(credentials), domain.WorkspaceID(workspace), "test", logger)
+		return api.NewHandler(application.NewMeetingService(meetings), application.NewConfigurationService(configurations, credentials), application.NewCredentialService(credentials), auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver(domain.WorkspaceID(workspace)), "test", logger)
 	}
 	a, b := newHandler("workspace-a"), newHandler("workspace-b")
 	created := decode(t, request(t, a, http.MethodPost, "/api/v1/meetings", `{"title":"Private"}`, nil))["meeting"].(map[string]any)

@@ -27,37 +27,41 @@ type contextKey string
 
 const (
 	requestIDKey contextKey = "request-id"
-	workspaceKey contextKey = "workspace-id"
+	stateKey     contextKey = "request-state"
 )
 
 type Server struct {
 	meetings      *application.MeetingService
 	configuration *application.ConfigurationService
 	credentials   *application.CredentialService
+	authenticator Authenticator
+	resolver      WorkspaceResolver
 	logger        *slog.Logger
-	workspaceID   domain.WorkspaceID
 	version       string
 }
 
-func NewHandler(meetings *application.MeetingService, configuration *application.ConfigurationService, credentials *application.CredentialService, workspaceID domain.WorkspaceID, version string, logger *slog.Logger) http.Handler {
+func NewHandler(meetings *application.MeetingService, configuration *application.ConfigurationService, credentials *application.CredentialService, authenticator Authenticator, resolver WorkspaceResolver, version string, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	s := &Server{meetings: meetings, configuration: configuration, credentials: credentials, logger: logger, workspaceID: workspaceID, version: version}
+	s := &Server{meetings: meetings, configuration: configuration, credentials: credentials, authenticator: authenticator, resolver: resolver, logger: logger, version: version}
 	mux := http.NewServeMux()
+	// Public: liveness and non-sensitive capability discovery.
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/capabilities", s.capabilities)
-	mux.HandleFunc("GET /api/v1/meetings", s.listMeetings)
-	mux.HandleFunc("POST /api/v1/meetings", s.createMeeting)
-	mux.HandleFunc("GET /api/v1/meetings/{meetingId}", s.getMeeting)
-	mux.HandleFunc("PATCH /api/v1/meetings/{meetingId}", s.updateMeeting)
-	mux.HandleFunc("DELETE /api/v1/meetings/{meetingId}", s.deleteMeeting)
-	mux.HandleFunc("GET /api/v1/configuration", s.getConfiguration)
-	mux.HandleFunc("PATCH /api/v1/configuration", s.updateConfiguration)
-	mux.HandleFunc("GET /api/v1/credentials", s.listCredentials)
-	mux.HandleFunc("PUT /api/v1/credentials/{provider}", s.updateCredential)
-	mux.HandleFunc("DELETE /api/v1/credentials/{provider}", s.deleteCredential)
-	return s.requestID(s.workspace(s.accessLog(s.recover(mux))))
+	// Protected: authenticated identity + workspace membership required.
+	mux.HandleFunc("GET /api/v1/me", s.authorize(s.me))
+	mux.HandleFunc("GET /api/v1/meetings", s.authorize(s.listMeetings))
+	mux.HandleFunc("POST /api/v1/meetings", s.authorize(s.createMeeting))
+	mux.HandleFunc("GET /api/v1/meetings/{meetingId}", s.authorize(s.getMeeting))
+	mux.HandleFunc("PATCH /api/v1/meetings/{meetingId}", s.authorize(s.updateMeeting))
+	mux.HandleFunc("DELETE /api/v1/meetings/{meetingId}", s.authorize(s.deleteMeeting))
+	mux.HandleFunc("GET /api/v1/configuration", s.authorize(s.getConfiguration))
+	mux.HandleFunc("PATCH /api/v1/configuration", s.authorize(s.updateConfiguration))
+	mux.HandleFunc("GET /api/v1/credentials", s.authorize(s.listCredentials))
+	mux.HandleFunc("PUT /api/v1/credentials/{provider}", s.authorize(s.updateCredential))
+	mux.HandleFunc("DELETE /api/v1/credentials/{provider}", s.authorize(s.deleteCredential))
+	return s.requestID(securityHeaders(s.accessLog(s.recover(mux))))
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -68,9 +72,6 @@ func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
 	response.Configuration.ServerManaged = true
 	response.Configuration.CredentialManagement = true
 	writeJSON(w, http.StatusOK, response)
-}
-func workspaceID(r *http.Request) domain.WorkspaceID {
-	return r.Context().Value(workspaceKey).(domain.WorkspaceID)
 }
 
 func (s *Server) listMeetings(w http.ResponseWriter, r *http.Request) {
@@ -254,15 +255,22 @@ var messages = map[application.ErrorCode]string{application.Validation: "Request
 
 var statuses = map[application.ErrorCode]int{application.Validation: 400, application.Unauthorized: 401, application.Forbidden: 403, application.NotFound: 404, application.Conflict: 409, application.Unavailable: 503, application.Internal: 500}
 
-// writeError sends a generic, safe error body. Internal and unavailable
-// failures are also logged with operational context; client errors are not.
+// writeError sends a generic, safe error body. Server failures (internal,
+// unavailable) and access decisions (unauthorized, forbidden, auth
+// conflicts) are logged with operational context; ordinary client errors
+// such as validation or not-found are not.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	appErr := &application.Error{Code: application.Internal}
 	if !errors.As(err, &appErr) {
 		appErr = &application.Error{Code: application.Internal, Err: err}
 	}
-	if appErr.Code == application.Internal || appErr.Code == application.Unavailable {
+	switch {
+	case appErr.Code == application.Internal, appErr.Code == application.Unavailable,
+		appErr.Code == application.Unauthorized, appErr.Code == application.Forbidden, appErr.Category != "":
 		s.logFailure(r, appErr)
+	}
+	if appErr.Code == application.Unauthorized {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="voxa"`)
 	}
 	writeJSON(w, statuses[appErr.Code], apiErrorResponse{Error: apiErrorBody{Code: string(appErr.Code), Message: messages[appErr.Code], Details: appErr.Details, RequestID: requestID(r.Context())}})
 }
@@ -273,8 +281,12 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 // Request bodies, headers and query strings are never logged.
 func (s *Server) logFailure(r *http.Request, appErr *application.Error) {
 	level := slog.LevelError
-	if appErr.Code == application.Unavailable {
+	if appErr.Code != application.Internal {
 		level = slog.LevelWarn
+	}
+	category := appErr.Category
+	if category == "" {
+		category = errorCategory(appErr.Err)
 	}
 	attrs := []slog.Attr{
 		slog.String("request_id", requestID(r.Context())),
@@ -282,11 +294,9 @@ func (s *Server) logFailure(r *http.Request, appErr *application.Error) {
 		slog.String("route", r.Pattern),
 		slog.String("code", string(appErr.Code)),
 		slog.String("operation", appErr.Op),
-		slog.String("category", errorCategory(appErr.Err)),
+		slog.String("category", category),
 	}
-	if workspace, ok := r.Context().Value(workspaceKey).(domain.WorkspaceID); ok {
-		attrs = append(attrs, slog.String("workspace_id", string(workspace)))
-	}
+	attrs = append(attrs, principalAttrs(r.Context())...)
 	if provider := r.PathValue("provider"); safeProvider.MatchString(provider) {
 		attrs = append(attrs, slog.String("provider", provider))
 	}
@@ -294,6 +304,20 @@ func (s *Server) logFailure(r *http.Request, appErr *application.Error) {
 		attrs = append(attrs, slog.Any("error", appErr.Err))
 	}
 	s.logger.LogAttrs(r.Context(), level, "request failed", attrs...)
+}
+
+// principalAttrs returns the safe identifiers of the resolved caller. Email,
+// display name, issuer and subject are deliberately omitted.
+func principalAttrs(ctx context.Context) []slog.Attr {
+	principal, ok := principalFrom(ctx)
+	if !ok {
+		return nil
+	}
+	return []slog.Attr{
+		slog.String("user_id", string(principal.User.ID)),
+		slog.String("workspace_id", string(principal.Workspace.ID)),
+		slog.String("role", string(principal.Role)),
+	}
 }
 
 var safeProvider = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -340,9 +364,18 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
 	})
 }
-func (s *Server) workspace(next http.Handler) http.Handler {
+
+// securityHeaders applies baseline API response headers. Responses are
+// per-user and may describe credentials, so nothing is cacheable. No CORS
+// headers are emitted: cross-origin browser access stays denied until an
+// explicit origin allow-list exists.
+func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workspaceKey, s.workspaceID)))
+		header := w.Header()
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("Cache-Control", "no-store")
+		header.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -365,12 +398,16 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		wrapped := &statusWriter{ResponseWriter: w}
-		next.ServeHTTP(wrapped, r)
+		ctx := context.WithValue(r.Context(), stateKey, &requestState{})
+		next.ServeHTTP(wrapped, r.WithContext(ctx))
 		status := wrapped.status
 		if status == 0 {
 			status = http.StatusOK
 		}
-		s.logger.Info("http request", "method", r.Method, "route", r.URL.Path, "status", status, "duration", time.Since(started), "request_id", requestID(r.Context()))
+		// Path only: query strings and headers (Authorization) are never logged.
+		attrs := []slog.Attr{slog.String("method", r.Method), slog.String("route", r.URL.Path), slog.Int("status", status),
+			slog.Duration("duration", time.Since(started)), slog.String("request_id", requestID(ctx))}
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "http request", append(attrs, principalAttrs(ctx)...)...)
 	})
 }
 func (s *Server) recover(next http.Handler) http.Handler {

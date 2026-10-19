@@ -13,6 +13,7 @@ import (
 	"github.com/OcheOps/voxa/server/internal/adapters/postgres"
 	"github.com/OcheOps/voxa/server/internal/api"
 	"github.com/OcheOps/voxa/server/internal/application"
+	"github.com/OcheOps/voxa/server/internal/auth"
 	"github.com/OcheOps/voxa/server/internal/repository/repositorytest"
 )
 
@@ -24,7 +25,7 @@ func serverOn(t *testing.T, pool *pgxpool.Pool, key []byte, logs *bytes.Buffer) 
 		application.NewMeetingService(postgres.NewMeetingRepository(pool)),
 		application.NewConfigurationService(postgres.NewConfigurationRepository(pool, application.DefaultConfiguration()), credentials),
 		application.NewCredentialService(credentials),
-		repositorytest.WorkspaceA, "test", slog.New(slog.NewJSONHandler(logs, nil)),
+		auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver(repositorytest.WorkspaceA), "test", slog.New(slog.NewJSONHandler(logs, nil)),
 	)
 }
 
@@ -74,4 +75,18 @@ func TestCredentialHTTPLifecycleSurvivesRestartWithoutLeaking(t *testing.T) {
 			t.Fatalf("secret leaked: %s", haystack)
 		}
 	}
+}
+
+func newRequest(method, target, body string) *http.Request {
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	return r
+}
+
+func serve(handler http.Handler, r *http.Request) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, r)
+	return recorder
 }

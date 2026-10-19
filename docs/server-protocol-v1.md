@@ -94,11 +94,18 @@ wire values remain ordinary JSON strings and require no UUID dependency.
 
 Meetings, sessions, media, transcripts, summaries, jobs and server configuration
 carry `workspaceId` in the domain. Top-level API routes stay concise rather than
-repeating `/workspaces/:workspaceId` everywhere. The future authenticated server
-will resolve one active Workspace into request context and authorize every
-repository operation against it. How clients select among multiple memberships
-(session claim, header, or explicit workspace-switch endpoint) is deferred with
-authentication design.
+repeating `/workspaces/:workspaceId` everywhere. The server authenticates each
+protected request (`Authorization: Bearer <token>`, see
+`docs/server-authentication.md`), resolves the caller's single workspace
+membership into request context, and authorizes every repository operation
+against it. Clients never send a workspace ID for scoping, and any such
+header is ignored. Selecting among several memberships is not supported yet:
+such callers receive `409 conflict` with
+`details.reason = "workspace_selection_required"`
+(`WORKSPACE_SELECTION_REQUIRED`).
+
+Bearer tokens are HTTP transport, not protocol data. No token, issuer,
+subject or claim shape exists in `voxa-protocol`.
 
 Response resources include `workspaceId` where ownership is useful to clients;
 nested resources do not require a second tenant identifier in URLs. A
@@ -111,6 +118,7 @@ contract.
 | --- | --- | --- | --- |
 | GET | `/api/v1/health` | none | `HealthResponse` |
 | GET | `/api/v1/capabilities` | none | `CapabilitiesResponse` |
+| GET | `/api/v1/me` | none (authenticated) | `MeResponse` |
 | GET | `/api/v1/meetings` | `cursor?`, `limit?` | `MeetingListResponse` |
 | POST | `/api/v1/meetings` | `CreateMeetingRequest` | `CreateMeetingResponse` |
 | GET | `/api/v1/meetings/:meetingId` | path ID | `GetMeetingResponse` |
@@ -122,8 +130,12 @@ contract.
 | PUT | `/api/v1/credentials/:provider` | `CredentialWriteRequest` | `CredentialUpdateResponse` |
 | DELETE | `/api/v1/credentials/:provider` | path provider | no body |
 
-HTTP handlers, status-code bindings and runtime request validation are deferred
-to the API service. The `ApiV1Contract` interface binds methods, paths and DTOs
+`health` and `capabilities` are public. Every other route requires
+authentication: `401 unauthorized` without a valid bearer token, `403
+forbidden` for an authenticated identity with no workspace membership.
+`/api/v1/me` (added in place to v1, since nothing breaks for existing
+clients) returns the caller (`id`, nullable `email`/`displayName`), the
+active workspace (`id`, `name`) and `role` (`owner` | `member`). The `ApiV1Contract` interface binds methods, paths and DTOs
 at compile time without selecting a web framework.
 
 ### Examples
@@ -243,8 +255,10 @@ capabilities to/from the shared protocol.
 
 ## Deferred work
 
-- authentication, membership and active-workspace selection;
 - production API handlers and runtime validation;
+- invitations, membership management, workspace selection and OIDC group
+  mapping (authentication and single-workspace membership exist; see
+  `docs/server-authentication.md`);
 - KMS/Vault-backed credential keys and bulk credential re-encryption (server
   credentials are already stored AES-256-GCM encrypted in PostgreSQL; see
   `docs/server-credential-security.md`);

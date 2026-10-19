@@ -18,6 +18,7 @@ import (
 	"github.com/OcheOps/voxa/server/internal/adapters/postgres"
 	"github.com/OcheOps/voxa/server/internal/api"
 	"github.com/OcheOps/voxa/server/internal/application"
+	"github.com/OcheOps/voxa/server/internal/auth"
 	"github.com/OcheOps/voxa/server/internal/credentialcrypto"
 	"github.com/OcheOps/voxa/server/internal/domain"
 	"github.com/OcheOps/voxa/server/internal/repository"
@@ -95,7 +96,7 @@ func outageHandler(t *testing.T, logs *bytes.Buffer) http.Handler {
 		application.NewMeetingService(postgres.NewMeetingRepository(pool)),
 		application.NewConfigurationService(postgres.NewConfigurationRepository(pool, application.DefaultConfiguration()), credentials),
 		application.NewCredentialService(credentials),
-		"workspace-test", "test", slog.New(slog.NewJSONHandler(logs, nil)),
+		auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver("workspace-test"), "test", slog.New(slog.NewJSONHandler(logs, nil)),
 	)
 }
 
@@ -171,7 +172,7 @@ func TestMalformedCredentialRequestsAreValidationErrors(t *testing.T) {
 	credentials := memory.NewCredentialRepository()
 	handler := api.NewHandler(application.NewMeetingService(memory.NewMeetingRepository()),
 		application.NewConfigurationService(memory.NewConfigurationRepository(application.DefaultConfiguration()), credentials),
-		application.NewCredentialService(credentials), "workspace-test", "test", slog.New(slog.NewJSONHandler(&logs, nil)))
+		application.NewCredentialService(credentials), auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver("workspace-test"), "test", slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	for name, body := range map[string]string{
 		"number value":  `{"value":12345}`,
@@ -206,7 +207,7 @@ func TestInternalErrorsAreLoggedWithContextButNotSecrets(t *testing.T) {
 	credentials := failingCredentials{memory.NewCredentialRepository()}
 	handler := api.NewHandler(application.NewMeetingService(memory.NewMeetingRepository()),
 		application.NewConfigurationService(memory.NewConfigurationRepository(application.DefaultConfiguration()), credentials),
-		application.NewCredentialService(credentials), "workspace-test", "test", slog.New(slog.NewJSONHandler(&logs, nil)))
+		application.NewCredentialService(credentials), auth.DevelopmentAuthenticator{}, application.NewDevelopmentResolver("workspace-test"), "test", slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	response := request(t, handler, http.MethodPut, "/api/v1/credentials/openai", `{"value":"`+leakCanary+`"}`, map[string]string{"Authorization": "Bearer " + leakCanary, "X-Request-ID": "req-internal-1"})
 	if response.Code != http.StatusInternalServerError {
