@@ -1,8 +1,9 @@
 # Voxa server protocol v1
 
-This document defines the first server-facing domain and HTTP contract. It is
-a design and shared TypeScript package, not a server implementation. The source
-of truth is `packages/voxa-protocol`; all paths below are rooted at `/api/v1`.
+This document defines the first server-facing domain and HTTP contract. The
+source of truth is `packages/voxa-protocol`; all paths below are rooted at
+`/api/v1`. A Go reference implementation with ephemeral in-memory adapters now
+lives in `server/`; it does not change or replace the TypeScript contract.
 
 ## Package structure
 
