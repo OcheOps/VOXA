@@ -47,7 +47,7 @@ Goals:
 | Area | Status |
 |---|---|
 | Voxa Web: sign-in (OIDC or development mode), meetings, settings, API keys | working |
-| Browser recording: microphone only, meeting tab + microphone, meeting tab only | working in Chromium desktop (automated tests); real meetings **not yet validated** |
+| Browser recording: microphone only, meeting tab + microphone, meeting tab only | working in Chromium desktop (automated tests); one live Google Meet run captured both sides (your microphone and the remote participants) and transcribed them; other apps **not yet validated** |
 | Offline/reload recovery of recordings | working (automated tests) |
 | Remux, transcription (whisper.cpp), transcript with click-to-seek | working |
 | Summaries (OpenAI, Anthropic, Groq, OpenRouter, Ollama, OpenAI-compatible) | working with a fake provider in tests; real providers not yet exercised |

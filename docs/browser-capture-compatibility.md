@@ -54,17 +54,31 @@ Measurement notes:
 
 ## 2. Manual results
 
-**No manual validation has been performed yet.** Every combination below is
-**untested**. Voxa cannot credibly claim support for any specific meeting
-platform until the matrix in §5 is filled in.
+One manual run so far (2026-10-20). Everything else below is **untested**.
+Voxa cannot credibly claim support for a meeting platform until its row in
+§5 is filled in.
 
-| | Fedora / Chromium | Windows / Chrome | macOS / Chrome |
+| | Fedora / Chrome | Windows / Chrome | macOS / Chrome |
 |---|---|---|---|
-| Google Meet | untested | untested | untested |
+| Google Meet | partially verified (run M1: both sides captured) | untested | untested |
 | Microsoft Teams Web | untested | untested | untested |
 | Zoom Web | untested | untested | untested |
 | Cisco Webex Web | untested | untested | untested |
 | WhatsApp Web | untested | untested | untested |
+
+**Run M1: Google Meet, Fedora, Google Chrome 155.0.8059.79 (desktop, headed), Voxa Web in development mode.**
+
+| Field | Result |
+|---|---|
+| Capture starts | yes: “Meeting tab + microphone”, Meet tab chosen in Chrome's share dialog (stored provenance `microphone_and_shared_audio`, `web`, `browser`) |
+| Remote audio audible in playback | **yes** (reported by the tester) |
+| Microphone audible | **yes** (reported by the tester) |
+| Clipping, echo, balance, noise suppression | not reported |
+| Audio route | not reported |
+| Upload | 119.5 s recording uploaded and finalized; no server warnings or errors |
+| Remux + transcript | yes: transcript produced (25 segments, 283 words, whisper.cpp `ggml-base.en`); quality not assessed |
+| Summary | not run (no provider configured) |
+| Scenarios S2–S13 | not run |
 
 What the automated results do and do not imply: Chromium tab capture of a
 page playing audio is verified on Fedora. Whether a given meeting app plays
@@ -76,7 +90,7 @@ window), and how it behaves on Windows and macOS, is untested.
 
 | Platform / browser | Status | Notes |
 |---|---|---|
-| Fedora / Chrome (desktop) | partially verified | Automated headless only (§1). No headed run with real devices, speakers or headsets. |
+| Fedora / Chrome (desktop) | partially verified | Automated headless (§1) plus one headed Google Meet run (M1): microphone and remote tab audio captured, transcribed. Devices, routes and the other scenarios untested. |
 | Fedora / Chromium (distribution package) | untested | Not installed here; Chrome results are expected to transfer but are not claimed. |
 | Windows / Chrome | untested | Chrome documents screen (system) audio on Windows in addition to tab audio; Voxa would record it as `sharedSurface: monitor`. Not verified. |
 | macOS / Chrome | untested | |
@@ -212,7 +226,7 @@ call audio.
 
 ## 7. Known compatibility gaps
 
-- No live meeting app has been validated (§2).
+- Only one live meeting app run (Google Meet M1: both sides audible; echo, balance, routes and transcript quality not yet assessed); Teams, Zoom, Webex and WhatsApp Web untested (§2).
 - Windows and macOS are untested; Windows screen (“system”) audio is
   undocumented in Voxa beyond being labelled `monitor`.
 - Firefox and Safari shared audio are untested. Their feature detection
