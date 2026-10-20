@@ -15,7 +15,7 @@ export const MODE_DESCRIPTIONS: Record<CaptureMode, string> = {
 
 /** Shown before starting a shared mode: Voxa cannot pick the tab for the user. */
 export const SHARE_INSTRUCTIONS =
-  'When you start, your browser asks what to share. Choose the tab where your meeting is running and turn on “Share tab audio”. Voxa cannot choose the tab for you, and only that tab’s audio is recorded (video is discarded).';
+  'When you start, your browser asks what to share. Choose the tab where your meeting is running and turn on “Share tab audio”. Voxa cannot choose the tab for you, and only that tab’s audio is recorded (video is discarded). The meeting must be open in this same browser profile: tabs from other profiles or browsers are not offered.';
 
 export function sharedAudioNote(capabilities: BrowserCaptureCapabilities): string | null {
   if (capabilities.sharedAudio === 'unknown') {

@@ -80,6 +80,8 @@ Voxa cannot credibly claim support for a meeting platform until its row in
 | Summary | not run (no provider configured) |
 | Scenarios S2–S13 | not run |
 
+**Run M2: entire-screen share, Fedora, Google Chrome 155.0.8059.79 (headed).** The meeting (Microsoft Teams web) was open in a *different Chrome profile*, so Chrome's share dialog did not offer its tab, and the tester chose “Entire screen” instead. Chrome returned no audio track for the screen share; Voxa did not start a recording and showed “You shared your screen, and the browser did not include its audio. Choose the meeting tab in the share dialog and turn on ‘Share tab audio’.” Result: screen-share audio is **unsupported on Fedora/Chrome (observed)**; the no-audio handling and message are **verified**. Use tab sharing (run M1), with the meeting in the same profile as Voxa.
+
 What the automated results do and do not imply: Chromium tab capture of a
 page playing audio is verified on Fedora. Whether a given meeting app plays
 its call audio inside the tab in a way that Chrome captures (for example
@@ -92,6 +94,7 @@ window), and how it behaves on Windows and macOS, is untested.
 |---|---|---|
 | Fedora / Chrome (desktop) | partially verified | Automated headless (§1) plus one headed Google Meet run (M1): microphone and remote tab audio captured, transcribed. Devices, routes and the other scenarios untested. |
 | Fedora / Chromium (distribution package) | untested | Not installed here; Chrome results are expected to transfer but are not claimed. |
+| Fedora / Chrome, entire-screen or window share | unsupported (observed, run M2) | Chrome provides no audio track for a screen share on Linux; Voxa refuses to start and asks for the meeting tab. |
 | Windows / Chrome | untested | Chrome documents screen (system) audio on Windows in addition to tab audio; Voxa would record it as `sharedSurface: monitor`. Not verified. |
 | macOS / Chrome | untested | |
 | Firefox (desktop) | partially verified | Microphone-only verified (Fedora, headless, production recorder: 7 chunks → valid WebM/Opus 48 kHz mono, decodes). Firefox enforces the user-gesture rule for getDisplayMedia (`InvalidStateError`, also with `privacy.userActivation.enabled=false`), so shared audio is untested; detection advertises no display-audio support and the UI warns. If a share returns no audio track, Voxa stops with the precise “no audio” message and microphone-only still works. |
@@ -235,6 +238,11 @@ call audio.
   precise “no audio” message (microphone-only remains available).
 - Mobile is untested.
 - The user must pick the tab and enable tab audio on every recording.
+- **The meeting must be in the same browser profile (and browser) as Voxa.**
+  Chrome's share dialog only lists tabs of the requesting profile; a meeting
+  in another profile or browser can only be shared as a window or screen,
+  which has no audio on Linux (observed, run M2). Workaround: open Voxa in
+  the meeting's profile.
 - Mixed recordings are one track; source attribution is not available.
 - Capture provenance records how a recording **started**; later source
   loss appears only in local diagnostics and the on-screen warning.

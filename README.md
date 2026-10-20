@@ -82,7 +82,8 @@ pnpm run dev:web                        # open http://localhost:3118 in Chrome
 Then:
 
 1. Join your meeting (Google Meet, Teams web, Zoom web client, Webex web…)
-   in a Chrome tab.
+   in a Chrome tab, **in the same Chrome profile** you open Voxa in (the
+   share dialog only lists tabs of the current profile).
 2. In Voxa (another tab), create a meeting and choose **Meeting tab +
    microphone**.
 3. Click **Choose tab and start recording**, pick the meeting tab in
