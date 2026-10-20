@@ -61,7 +61,7 @@ Voxa cannot credibly claim support for a meeting platform until its row in
 | | Fedora / Chrome | Windows / Chrome | macOS / Chrome |
 |---|---|---|---|
 | Google Meet | partially verified (run M1: both sides captured) | untested | untested |
-| Microsoft Teams Web | untested | untested | untested |
+| Microsoft Teams Web | tester-reported working (run M3; not verified on the server) | untested | untested |
 | Zoom Web | untested | untested | untested |
 | Cisco Webex Web | untested | untested | untested |
 | WhatsApp Web | untested | untested | untested |
@@ -81,6 +81,8 @@ Voxa cannot credibly claim support for a meeting platform until its row in
 | Scenarios S2–S13 | not run |
 
 **Run M2: entire-screen share, Fedora, Google Chrome 155.0.8059.79 (headed).** The meeting (Microsoft Teams web) was open in a *different Chrome profile*, so Chrome's share dialog did not offer its tab, and the tester chose “Entire screen” instead. Chrome returned no audio track for the screen share; Voxa did not start a recording and showed “You shared your screen, and the browser did not include its audio. Choose the meeting tab in the share dialog and turn on ‘Share tab audio’.” Result: screen-share audio is **unsupported on Fedora/Chrome (observed)**; the no-audio handling and message are **verified**. Use tab sharing (run M1), with the meeting in the same profile as Voxa.
+
+**Run M3: Microsoft Teams web, same Chrome profile as Voxa, Fedora, Google Chrome 155.0.8059.79 (headed).** After opening Voxa in the Teams profile, the tester reported that capture worked. No Teams recording reached the test server, so upload, transcript and audio were not checked server-side. Status: **tester-reported**, not verified.
 
 What the automated results do and do not imply: Chromium tab capture of a
 page playing audio is verified on Fedora. Whether a given meeting app plays
