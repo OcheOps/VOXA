@@ -1,9 +1,11 @@
 # Voxa
 
-**A privacy-first meeting assistant you run yourself.** Voxa records a
-meeting, transcribes it with a self-hosted Whisper model and summarizes it
-with the LLM provider *you* choose. Recordings, transcripts and summaries
-stay on your own server.
+**A self-hosted meeting recorder and AI meeting assistant, without a bot
+joining your call.** Voxa records a meeting straight from your browser or
+desktop (your microphone plus the meeting tab's audio), keeps recording
+through network drops, stores the audio on your own server, transcribes it
+with Whisper and summarizes it with the LLM provider *you* choose. Think
+Fireflies or Read.ai, but you own the data and there is no monthly SaaS fee.
 
 Voxa is built on [Meetily](https://github.com/Zackriya-Solutions/meeting-minutes)
 (MIT). It keeps Meetily's local desktop app and adds a self-hosted server
@@ -44,17 +46,66 @@ Goals:
 
 ## What works today
 
+Last updated 2026-10-20.
+
 | Area | Status |
 |---|---|
-| Voxa Web: sign-in (OIDC or development mode), meetings, settings, API keys | working |
-| Browser recording: microphone only, meeting tab + microphone, meeting tab only | working in Chromium desktop (automated tests); one live Google Meet run captured both sides (your microphone and the remote participants) and transcribed them; other apps **not yet validated** |
-| Offline/reload recovery of recordings | working (automated tests) |
+| Go server: PostgreSQL, encrypted provider credentials, OIDC sign-in, workspace isolation | working |
+| Voxa Web: meetings, settings, API keys; responsive layout (desktop sidebar, phone menu) | working; first UI pass done |
+| Browser recording: microphone only, meeting tab + microphone, meeting tab only | working in Chromium desktop (automated tests) |
+| Real meetings | **Google Meet** (Fedora/Chrome): both sides captured and transcribed. **Teams web**: tester-reported working. Zoom, Webex, WhatsApp Web: not yet tried |
+| Offline/reload recovery of recordings | working (automated tests, incl. a 30-minute run) |
 | Remux, transcription (whisper.cpp), transcript with click-to-seek | working |
 | Summaries (OpenAI, Anthropic, Groq, OpenRouter, Ollama, OpenAI-compatible) | working with a fake provider in tests; real providers not yet exercised |
 | Recording source labels (capture provenance) | working |
 | Desktop app (Meetily) | unchanged |
+| Deployment | **planned**, not built: [docs/deployment-plan.md](docs/deployment-plan.md) |
 | Firefox / Safari shared tab audio, mobile, Windows, macOS | untested; see [compatibility](docs/browser-capture-compatibility.md) |
-| Browser extension, Android app, diarization | not started |
+| Cloud transcription, “export to your LLM”, browser extension, Android app, diarization | not started |
+
+Known limitations from real use:
+
+- The meeting must be open in the **same Chrome profile** as Voxa: the share
+  dialog only lists tabs of the current profile.
+- On Linux, sharing a whole screen or window gives **no audio**; share the
+  meeting tab instead.
+
+## Roadmap
+
+Next, roughly in order:
+
+1. **Deploy** on a VPS: Docker Compose with Caddy (HTTPS), PostgreSQL and
+   Zitadel sign-in ([plan](docs/deployment-plan.md)). Needed before teammates
+   can use it (browsers only allow capture on HTTPS).
+2. **Validate real meetings**: Zoom web, Webex web, WhatsApp Web, Windows
+   and macOS Chrome, headsets and speakers; record results in the
+   [validation matrix](docs/browser-capture-compatibility.md).
+3. **Better transcription**: switch to the free `large-v3-turbo` Whisper
+   model (one setting), and optionally add cloud transcription (Groq,
+   OpenAI; Deepgram/AssemblyAI for speaker labels) as an opt-in, with local
+   Whisper staying the default.
+4. **Export to your LLM**: copy the transcript with Voxa's summary prompt
+   into ChatGPT/Claude/Gemini and paste the answer back as the summary (uses
+   a subscription you already have instead of an API key).
+5. **UI polish**: transcript view, recording-in-progress state, meeting
+   status in the list.
+
+Later: diarization, separate microphone/remote tracks, browser extension,
+mobile/native capture, search, summary editing, team/admin features.
+
+## Models and API keys
+
+- **Transcription** runs locally with whisper.cpp; the model is the
+  server's `VOXA_WHISPER_MODEL` (a GGML file from
+  [whisper.cpp's models](https://huggingface.co/ggerganov/whisper.cpp)).
+  `base.en` is fast but rough; `small.en` is better; `large-v3-turbo`
+  (quantized) is the recommended free upgrade.
+- **Summaries** use a provider the server operator enables
+  (`VOXA_SUMMARY_PROVIDERS`), chosen in Settings, with an API key you add
+  under API keys (stored encrypted, never shown again). Free tiers exist at
+  Groq, OpenRouter and Google Gemini (via the OpenAI-compatible option);
+  OpenAI and Anthropic are paid per use. API keys are billed separately
+  from ChatGPT/Claude subscriptions.
 
 ## Try it on a meeting (local)
 
@@ -108,6 +159,7 @@ summaries are unavailable.
 | Browser recording and uploads | [docs/voxa-web-recording.md](docs/voxa-web-recording.md) |
 | Meeting tab capture | [docs/voxa-web-meeting-capture.md](docs/voxa-web-meeting-capture.md) |
 | Compatibility status and validation matrix | [docs/browser-capture-compatibility.md](docs/browser-capture-compatibility.md) |
+| Deployment plan | [docs/deployment-plan.md](docs/deployment-plan.md) |
 | Processing and transcription | [docs/server-processing.md](docs/server-processing.md) |
 | Summaries | [docs/server-summaries.md](docs/server-summaries.md) |
 | Authentication | [docs/server-authentication.md](docs/server-authentication.md) |
