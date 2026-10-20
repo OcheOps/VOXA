@@ -2,6 +2,18 @@
 
 import { useEffect, useState } from 'react';
 import { Mic, MonitorUp, Pause, Play, Square } from 'lucide-react';
+
+const MODE_ICONS: Record<CaptureMode, React.ReactNode> = {
+  microphone: <Mic className="h-4 w-4" />,
+  'microphone+shared': <span className="flex"><MonitorUp className="h-4 w-4" /></span>,
+  shared: <MonitorUp className="h-4 w-4" />,
+};
+
+const MODE_SHORT: Record<CaptureMode, string> = {
+  microphone: 'You, or a conversation in the room',
+  'microphone+shared': 'You and everyone in a browser call',
+  shared: 'Only the call audio, without your microphone',
+};
 import type { CaptureMode } from '@/clients/browser/recording-client';
 import { useVoxaClient } from '@/clients';
 import type { RecordingDevice } from '@/clients/contracts';
@@ -39,7 +51,8 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
   const [devices, setDevices] = useState<RecordingDevice[]>([]);
   const [device, setDevice] = useState<string>('');
   const modes = availableModes(recording.capabilities.browserCapture);
-  const [mode, setMode] = useState<CaptureMode>('microphone');
+  // Recording a call is Voxa's main use: default to the meeting tab + microphone when possible.
+  const [mode, setMode] = useState<CaptureMode>(() => (modes.includes('microphone+shared') ? 'microphone+shared' : 'microphone'));
   const sharing = mode !== 'microphone';
   const active = session.meetingId === meetingId && session.phase !== 'idle';
   const otherMeetingRecording = session.phase !== 'idle' && session.meetingId !== meetingId;
@@ -89,13 +102,23 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
       ) : (
         <div className="space-y-2">
         {modes.length > 1 && (
-          <fieldset className="space-y-1">
-            <legend className="text-xs font-medium text-gray-700">What to record</legend>
-            <div className="flex flex-wrap gap-3">
+          <fieldset className="space-y-2">
+            <legend className="mb-2 text-sm font-medium text-gray-900">What to record</legend>
+            <div className="grid gap-2 sm:grid-cols-3">
               {modes.map((option) => (
-                <label key={option} className="flex items-center gap-1 text-sm text-gray-800" title={MODE_DESCRIPTIONS[option]}>
-                  <input type="radio" name={`capture-mode-${meetingId}`} value={option} checked={mode === option} onChange={() => setMode(option)} />
-                  {MODE_LABELS[option]}
+                <label
+                  key={option}
+                  title={MODE_DESCRIPTIONS[option]}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3 text-sm transition ${mode === option ? 'border-gray-900 ring-1 ring-gray-900' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  <input type="radio" className="sr-only" name={`capture-mode-${meetingId}`} value={option} checked={mode === option} onChange={() => setMode(option)} />
+                  <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${mode === option ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'}`} aria-hidden>
+                    {MODE_ICONS[option]}
+                  </span>
+                  <span>
+                    <span className="block font-medium text-gray-900">{MODE_LABELS[option]}</span>
+                    <span className="block text-xs text-gray-500">{MODE_SHORT[option]}</span>
+                  </span>
                 </label>
               ))}
             </div>
@@ -103,7 +126,7 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
           </fieldset>
         )}
         {sharing && (
-          <div className="space-y-1 rounded-md bg-blue-50 p-2 text-xs text-blue-900">
+          <div className="space-y-1 rounded-lg bg-blue-50 p-3 text-xs text-blue-900">
             <p>{SHARE_INSTRUCTIONS}</p>
             {recording.capabilities.browserCapture && sharedAudioNote(recording.capabilities.browserCapture) && (
               <p>{sharedAudioNote(recording.capabilities.browserCapture)}</p>
@@ -121,12 +144,12 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
         )}
         <div className="flex flex-wrap items-center gap-2">
           {mode !== 'shared' && devices.length > 1 && (
-            <select className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" value={device} onChange={(e) => setDevice(e.target.value)} aria-label="Microphone">
+            <select className="h-10 rounded-md border border-gray-300 bg-white px-2 text-sm" value={device} onChange={(e) => setDevice(e.target.value)} aria-label="Microphone">
               <option value="">Default microphone</option>
               {devices.map((d) => <option key={d.name} value={d.name}>{d.name}</option>)}
             </select>
           )}
-          <Button onClick={() => void recordingSession.start(meetingId, device || null, mode)} disabled={otherMeetingRecording}>
+          <Button size="lg" className="bg-red-600 text-white hover:bg-red-700" onClick={() => void recordingSession.start(meetingId, device || null, mode)} disabled={otherMeetingRecording}>
             {sharing ? <MonitorUp className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}{sharing ? 'Choose tab and start recording' : 'Start recording'}
           </Button>
           {otherMeetingRecording && <span className="text-xs text-gray-500">Another meeting is being recorded.</span>}

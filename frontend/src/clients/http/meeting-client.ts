@@ -44,7 +44,7 @@ export class HttpMeetingClient implements MeetingClient {
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const response = await this.transport.get<MeetingListResponse>('/api/v1/meetings', { query: { limit: PAGE_SIZE, cursor } });
-      items.push(...response.items.map(({ id, title }) => ({ id, title })));
+      items.push(...response.items.map(({ id, title, createdAt, updatedAt }) => ({ id, title, createdAt, updatedAt })));
       if (!response.page.hasMore || !response.page.nextCursor) return items;
       cursor = response.page.nextCursor;
     }

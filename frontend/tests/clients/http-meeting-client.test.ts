@@ -21,9 +21,12 @@ describe('HttpMeetingClient', () => {
         ? json(200, { items: [meeting('m3')], page: { nextCursor: null, hasMore: false } })
         : json(200, { items: [meeting('m1'), meeting('m2')], page: { nextCursor: 'page-2', hasMore: true } }),
     });
-    expect(await meetings.list()).toEqual([
-      { id: 'm1', title: 'Meeting m1' }, { id: 'm2', title: 'Meeting m2' }, { id: 'm3', title: 'Meeting m3' },
+    const dates = { createdAt: '2026-10-19T10:00:00.000001Z', updatedAt: '2026-10-19T11:00:00Z' };
+    const listed = await meetings.list();
+    expect(listed).toEqual([
+      { id: 'm1', title: 'Meeting m1', ...dates }, { id: 'm2', title: 'Meeting m2', ...dates }, { id: 'm3', title: 'Meeting m3', ...dates },
     ]);
+    expect(JSON.stringify(listed)).not.toContain('workspace');
     expect(requests.map((r) => r.url.searchParams.get('cursor'))).toEqual([null, 'page-2']);
     expect(requests.every((r) => r.url.searchParams.get('limit') === '100')).toBe(true);
     expect(JSON.stringify(await meetings.list())).not.toContain('wsp_');

@@ -8,6 +8,9 @@ import type {
 export interface MeetingListItem {
   id: string;
   title: string;
+  /** Present for server meetings (web); the desktop list does not provide them. */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface MeetingDetails extends MeetingMetadata {

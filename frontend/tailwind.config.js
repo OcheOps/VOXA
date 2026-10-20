@@ -5,12 +5,22 @@ module.exports = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    // Voxa Web components live outside components/; without this their classes are never generated.
+    './src/web/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
   	extend: {
   		fontFamily: {
   			sans: [
-  				'var(--font-source-sans-3)'
+					'var(--font-source-sans-3)',
+					'ui-sans-serif',
+					'system-ui',
+					'-apple-system',
+					'Segoe UI',
+					'Roboto',
+					'Helvetica Neue',
+					'Arial',
+					'sans-serif'
   			]
   		},
   		colors: {

@@ -8,7 +8,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { useServerCapabilities } from './context';
 import { describeError } from './errors';
+
+/** Example models per provider, shown as hints only (any model the provider offers works). */
+const MODEL_EXAMPLES: Record<string, string> = {
+  openai: 'e.g. gpt-4o-mini', claude: 'e.g. claude-sonnet-5-5', groq: 'e.g. llama-3.3-70b-versatile',
+  openrouter: 'e.g. openai/gpt-4o-mini', ollama: 'e.g. llama3.1', 'custom-openai': 'model name on your endpoint',
+};
+
+const PROVIDER_NAMES: Record<string, string> = {
+  openai: 'OpenAI', claude: 'Anthropic (Claude)', groq: 'Groq', openrouter: 'OpenRouter', ollama: 'Ollama (self-hosted)', 'custom-openai': 'OpenAI-compatible endpoint',
+};
+
+const LANGUAGES: Array<[string, string]> = [
+  ['auto', 'Detect automatically'], ['en', 'English'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish'], ['pt', 'Portuguese'],
+  ['it', 'Italian'], ['nl', 'Dutch'], ['pl', 'Polish'], ['tr', 'Turkish'], ['ar', 'Arabic'], ['hi', 'Hindi'], ['zh', 'Chinese'],
+  ['ja', 'Japanese'], ['ko', 'Korean'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['sv', 'Swedish'],
+];
 
 const PROVIDER_SUGGESTIONS = ['openai', 'claude', 'groq', 'openrouter', 'ollama', 'custom-openai', 'deepgram', 'elevenLabs'];
 
@@ -40,17 +57,49 @@ function TextField({ id, label, value, onChange, list }: { id: string; label: st
   );
 }
 
-function ToggleField({ id, label, checked, onChange }: { id: string; label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function ToggleField({ id, label, hint, checked, onChange }: { id: string; label: string; hint?: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
     <div className="flex items-center justify-between gap-4 py-1">
-      <Label htmlFor={id}>{label}</Label>
+      <span>
+        <Label htmlFor={id}>{label}</Label>
+        {hint && <span className="block text-xs text-gray-500">{hint}</span>}
+      </span>
       <Switch id={id} checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }
 
+function SelectField({ id, label, value, options, onChange, hint }: {
+  id: string; label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void; hint?: string;
+}) {
+  // Keep an unknown stored value selectable instead of silently changing it.
+  const all = options.some(([option]) => option === value) ? options : [...options, [value, value] as [string, string]];
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-sm">
+        {all.map(([option, text]) => <option key={option} value={option}>{text}</option>)}
+      </select>
+      {hint && <p className="text-xs text-gray-500">{hint}</p>}
+    </div>
+  );
+}
+
+function Card({ title, description, children, label }: { title: string; description?: string; children: React.ReactNode; label?: string }) {
+  return (
+    <section aria-label={label ?? title} className="space-y-4 rounded-xl border border-gray-200 p-4 sm:p-5">
+      <div>
+        <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+        {description && <p className="text-sm text-gray-500">{description}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function WorkspaceDefaults() {
   const { workspaceSettings } = useVoxaClient();
+  const server = useServerCapabilities();
   const [saved, setSaved] = useState<WorkspaceSettings | null>(null);
   const [draft, setDraft] = useState<WorkspaceSettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -84,34 +133,54 @@ function WorkspaceDefaults() {
     }
   };
 
+  const transcription = server?.transcription;
+  const enabled = server?.summary.providers ?? [];
+  const providerOptions: Array<[string, string]> = [['none', 'Off'], ...enabled.map((name): [string, string] => [name, PROVIDER_NAMES[name] ?? name])];
+  const summaryOff = draft.summary.provider === 'none' || draft.summary.provider === '';
+
   return (
     <form onSubmit={save} className="space-y-6" aria-label="Workspace settings">
-      <datalist id="provider-suggestions">
-        {PROVIDER_SUGGESTIONS.map((provider) => <option key={provider} value={provider} />)}
-      </datalist>
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-semibold text-gray-800">Transcription defaults</legend>
-        <TextField id="transcription-provider" label="Provider" value={draft.transcription.provider} onChange={(provider) => setTranscription({ provider })} list="provider-suggestions" />
-        <TextField id="transcription-model" label="Model" value={draft.transcription.model} onChange={(model) => setTranscription({ model })} />
-        <TextField id="transcription-language" label="Language" value={draft.transcription.language} onChange={(language) => setTranscription({ language })} />
-        <ToggleField id="transcription-translate" label="Translate to English" checked={draft.transcription.translateToEnglish} onChange={(translateToEnglish) => setTranscription({ translateToEnglish })} />
-      </fieldset>
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-semibold text-gray-800">Summary defaults</legend>
-        <TextField id="summary-provider" label="Provider" value={draft.summary.provider} onChange={(provider) => setSummary({ provider })} list="provider-suggestions" />
-        <TextField id="summary-model" label="Model" value={draft.summary.model} onChange={(model) => setSummary({ model })} />
-        <TextField id="summary-language" label="Output language" value={draft.summary.outputLanguage} onChange={(outputLanguage) => setSummary({ outputLanguage })} />
-        <ToggleField id="summary-auto" label="Generate summaries automatically" checked={draft.summary.autoGenerate} onChange={(autoGenerate) => setSummary({ autoGenerate })} />
-      </fieldset>
-      <fieldset className="space-y-1">
-        <legend className="text-sm font-semibold text-gray-800">Workspace</legend>
+      <Card title="Transcription" description="Recordings are transcribed on this Voxa server after upload.">
+        <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+          {transcription?.available
+            ? <>Engine: <span className="font-medium">{transcription.providers.join(', ')}</span> (chosen by the server operator)</>
+            : 'Transcription is not available on this server.'}
+        </p>
+        <SelectField id="transcription-language" label="Spoken language" value={draft.transcription.language || 'auto'} options={LANGUAGES}
+          onChange={(language) => setTranscription({ language })} />
+        <ToggleField id="transcription-translate" label="Translate to English" hint="Produce an English transcript from other languages."
+          checked={draft.transcription.translateToEnglish} onChange={(translateToEnglish) => setTranscription({ translateToEnglish })} />
+      </Card>
+      <Card title="Summaries" description="Summaries are written by the AI provider you choose, using your own API key.">
+        {enabled.length === 0 ? (
+          <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">No summary providers are enabled on this server. The operator enables them with VOXA_SUMMARY_PROVIDERS.</p>
+        ) : (
+          <>
+            <SelectField id="summary-provider" label="Provider" value={draft.summary.provider || 'none'} options={providerOptions}
+              onChange={(provider) => setSummary({ provider })}
+              hint={summaryOff ? undefined : `Add an API key for ${PROVIDER_NAMES[draft.summary.provider] ?? draft.summary.provider} under API keys below, if it needs one.`} />
+            {!summaryOff && (
+              <div className="space-y-1">
+                <Label htmlFor="summary-model">Model</Label>
+                <Input id="summary-model" value={draft.summary.model} onChange={(e) => setSummary({ model: e.target.value })} placeholder={MODEL_EXAMPLES[draft.summary.provider] ?? 'model name'} autoComplete="off" />
+              </div>
+            )}
+          </>
+        )}
+        <SelectField id="summary-language" label="Summary language" value={draft.summary.outputLanguage || 'auto'} options={[['auto', 'Same as the meeting'], ...LANGUAGES.slice(1)]}
+          onChange={(outputLanguage) => setSummary({ outputLanguage })} />
+        <ToggleField id="summary-auto" label="Summarize automatically" hint="Generate a summary as soon as a transcript is ready."
+          checked={draft.summary.autoGenerate} onChange={(autoGenerate) => setSummary({ autoGenerate })} />
+      </Card>
+      <Card title="Workspace">
         <ToggleField id="retain-media" label="Keep recordings after processing" checked={draft.retainMedia} onChange={(retainMedia) => setDraft({ ...draft, retainMedia })} />
         <ToggleField id="analytics" label="Share anonymous usage analytics" checked={draft.analyticsEnabled} onChange={(analyticsEnabled) => setDraft({ ...draft, analyticsEnabled })} />
         <ToggleField id="processing-complete" label="Notify when processing completes" checked={draft.processingCompleteNotifications} onChange={(processingCompleteNotifications) => setDraft({ ...draft, processingCompleteNotifications })} />
-      </fieldset>
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save settings'}</Button>
-        <Button type="button" variant="ghost" disabled={!dirty || saving} onClick={() => setDraft(saved)}>Discard changes</Button>
+      </Card>
+      <div className={`sticky bottom-0 -mx-4 flex gap-2 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border ${dirty ? '' : 'hidden'}`}>
+        <span className="mr-auto self-center text-sm text-gray-600">You have unsaved changes.</span>
+        <Button type="button" variant="ghost" disabled={saving} onClick={() => setDraft(saved)}>Discard</Button>
+        <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</Button>
       </div>
     </form>
   );
@@ -168,10 +237,10 @@ function Credentials() {
   };
 
   return (
-    <section className="space-y-4" aria-label="Provider API keys">
+    <section className="space-y-4 rounded-xl border border-gray-200 p-4 sm:p-5" aria-label="Provider API keys">
       <div>
-        <h2 className="text-sm font-semibold text-gray-800">Provider API keys</h2>
-        <p className="text-xs text-gray-500">Keys are stored encrypted on the Voxa server and can never be read back. Enter a key again to replace it.</p>
+        <h2 className="text-base font-semibold text-gray-900">Provider API keys</h2>
+        <p className="text-sm text-gray-500">Keys are stored encrypted on the Voxa server and can never be read back. Enter a key again to replace it.</p>
       </div>
       {statuses === null ? (
         <p className="text-sm text-gray-500">Loading…</p>
@@ -193,7 +262,10 @@ function Credentials() {
           ))}
         </ul>
       )}
-      <form onSubmit={save} className="grid grid-cols-[1fr_2fr_auto] items-end gap-2" aria-label="Add provider key">
+      <datalist id="provider-suggestions">
+        {PROVIDER_SUGGESTIONS.map((name) => <option key={name} value={name} />)}
+      </datalist>
+      <form onSubmit={save} className="grid items-end gap-2 sm:grid-cols-[1fr_2fr_auto]" aria-label="Add provider key">
         <div className="space-y-1">
           <Label htmlFor="credential-provider">Provider</Label>
           <Input id="credential-provider" value={provider} onChange={(e) => setProvider(e.target.value)} list="provider-suggestions" autoComplete="off" />
@@ -221,9 +293,9 @@ function DesktopOnlyNotice() {
 
 export function WebSettings() {
   return (
-    <div className="mx-auto max-w-2xl space-y-10 p-8">
+    <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 sm:px-8 sm:py-10">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Settings</h1>
         <DesktopOnlyNotice />
       </header>
       <WorkspaceDefaults />

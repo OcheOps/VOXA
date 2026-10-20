@@ -120,7 +120,7 @@ describe('web runtime startup', () => {
     let detail!: ReactTestRenderer;
     await act(async () => { detail = create(<WebApp><WebMeetingDetail /></WebApp>); });
     await settle();
-    expect(text(detail)).toContain('Recordings and transcripts');
+    expect(text(detail)).toContain('Transcript & recordings');
     detail.unmount();
 
     pathname = '/settings';

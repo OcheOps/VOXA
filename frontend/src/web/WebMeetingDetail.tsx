@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { Pencil, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { useVoxaClient } from '@/clients';
 import { VoxaApiError } from '@/clients/http/transport';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -19,7 +19,30 @@ import { describeError } from './errors';
 
 function formatDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Small actions menu (rename, delete) for the meeting header. */
+function ActionsMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const choose = (action: () => void) => () => { setOpen(false); action(); };
+  return (
+    <div className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }}>
+      <Button variant="ghost" size="icon" aria-label="Meeting actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <MoreHorizontal className="h-5 w-5" />
+      </Button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg">
+          <button type="button" role="menuitem" aria-label="Rename meeting" onClick={choose(onRename)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-800 hover:bg-gray-50">
+            <Pencil className="h-4 w-4" />Rename
+          </button>
+          <button type="button" role="menuitem" aria-label="Delete meeting" onClick={choose(onDelete)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-red-50">
+            <Trash2 className="h-4 w-4" />Delete meeting
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MeetingDetail() {
@@ -32,6 +55,7 @@ function MeetingDetail() {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tab, setTab] = useState<'summary' | 'transcript'>('summary');
 
   const load = useCallback(async () => {
     if (!meetingId) {
@@ -91,37 +115,54 @@ function MeetingDetail() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-8">
-      <header className="space-y-2">
-        {editing ? (
-          <form onSubmit={rename} className="flex gap-2" aria-label="Rename meeting">
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} autoFocus aria-label="Meeting title" />
-            <Button type="submit" disabled={!title.trim()}>Save</Button>
-            <Button type="button" variant="ghost" onClick={() => { setEditing(false); setTitle(meeting.title); }}>Cancel</Button>
-          </form>
-        ) : (
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-gray-900">{meeting.title}</h1>
-            <Button variant="ghost" size="icon" onClick={() => setEditing(true)} aria-label="Rename meeting">
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => setConfirmDelete(true)} aria-label="Delete meeting">
-              <Trash2 className="h-4 w-4 text-red-600" />
-            </Button>
-          </div>
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-8 sm:py-10">
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          {editing ? (
+            <form onSubmit={rename} className="flex gap-2" aria-label="Rename meeting">
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} autoFocus aria-label="Meeting title" />
+              <Button type="submit" disabled={!title.trim()}>Save</Button>
+              <Button type="button" variant="ghost" onClick={() => { setEditing(false); setTitle(meeting.title); }}>Cancel</Button>
+            </form>
+          ) : (
+            <h1 className="break-words text-2xl font-semibold tracking-tight text-gray-900">{meeting.title}</h1>
+          )}
+          <p className="text-sm text-gray-500">{formatDate(meeting.created_at)}</p>
+        </div>
+        {!editing && (
+          <ActionsMenu onRename={() => setEditing(true)} onDelete={() => setConfirmDelete(true)} />
         )}
-        <p className="text-xs text-gray-500">Created {formatDate(meeting.created_at)} · Updated {formatDate(meeting.updated_at)}</p>
       </header>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Recordings and transcripts</h2>
+      <section aria-label="Record" className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 sm:p-5">
         <RecordingPanel meetingId={meeting.id} />
-        <MeetingMedia meetingId={meeting.id} />
       </section>
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Summary</h2>
-        <SummaryPanel meetingId={meeting.id} />
-      </section>
+
+      <div>
+        <div role="tablist" aria-label="Meeting content" className="flex gap-1 border-b border-gray-200">
+          {([['summary', 'Summary'], ['transcript', 'Transcript & recordings']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              id={`tab-${value}`}
+              aria-selected={tab === value}
+              aria-controls={`panel-${value}`}
+              onClick={() => setTab(value)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${tab === value ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-800'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* Both panels stay mounted so polling and playback state survive switching tabs. */}
+        <div role="tabpanel" id="panel-summary" aria-labelledby="tab-summary" hidden={tab !== 'summary'} className="pt-4">
+          <SummaryPanel meetingId={meeting.id} />
+        </div>
+        <div role="tabpanel" id="panel-transcript" aria-labelledby="tab-transcript" hidden={tab !== 'transcript'} className="pt-4">
+          <MeetingMedia meetingId={meeting.id} />
+        </div>
+      </div>
       <CapabilityNotice />
 
       <ConfirmationModal
