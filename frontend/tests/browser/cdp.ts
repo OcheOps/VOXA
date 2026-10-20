@@ -1,7 +1,11 @@
 /** Minimal Chrome DevTools Protocol driver for browser tests (no dependencies). */
 export interface ChromePage {
   send(method: string, params?: Record<string, unknown>): Promise<any>;
+  /** Evaluates with a simulated user gesture (needed by getDisplayMedia and audio). */
   evaluate<T = unknown>(expression: string): Promise<T>;
+  /** Opens another tab (e.g. a meeting page to share); returns its target id. */
+  openTab(url: string): Promise<string>;
+  closeTab(id: string): Promise<void>;
   close(): void;
 }
 
@@ -12,11 +16,16 @@ export function chromeBinary(): string | null {
   return null;
 }
 
-export async function launchChrome(userDataDir: string): Promise<ChromePage> {
+/**
+ * `fakeUi: false` is needed for real tab capture: the fake media UI turns
+ * getDisplayMedia into a fake screen. Microphone permission is then granted
+ * through CDP and `--auto-select-tab-capture-source-by-title=…` picks the tab.
+ */
+export async function launchChrome(userDataDir: string, options: { args?: string[]; fakeUi?: boolean } = {}): Promise<ChromePage> {
   const port = 9300 + Math.floor(Math.random() * 600);
   const proc = Bun.spawn([chromeBinary()!, '--headless=new', `--remote-debugging-port=${port}`, '--no-first-run', '--no-default-browser-check',
-    '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required',
-    `--user-data-dir=${userDataDir}`, 'about:blank'], { stdout: 'ignore', stderr: 'ignore' });
+    '--use-fake-device-for-media-stream', ...(options.fakeUi === false ? [] : ['--use-fake-ui-for-media-stream']), '--autoplay-policy=no-user-gesture-required',
+    ...(options.args ?? []), `--user-data-dir=${userDataDir}`, 'about:blank'], { stdout: 'ignore', stderr: 'ignore' });
   let page: { webSocketDebuggerUrl: string } | undefined;
   for (let i = 0; i < 150 && !page; i++) {
     try {
@@ -45,11 +54,18 @@ export async function launchChrome(userDataDir: string): Promise<ChromePage> {
   return {
     send,
     async evaluate<T>(expression: string) {
-      const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+      const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
       if (response.result?.exceptionDetails) {
         throw new Error(`page error: ${JSON.stringify(response.result.exceptionDetails.exception?.description ?? response.result.exceptionDetails).slice(0, 800)}`);
       }
       return response.result?.result?.value as T;
+    },
+    async openTab(url: string) {
+      const target = await (await fetch(`http://127.0.0.1:${port}/json/new?${url}`, { method: 'PUT' })).json() as { id: string };
+      return target.id;
+    },
+    async closeTab(id: string) {
+      await fetch(`http://127.0.0.1:${port}/json/close/${id}`);
     },
     close() {
       ws.close();

@@ -10,6 +10,23 @@ import type {
   RecordingStoppedEvent,
 } from '../contracts';
 import { UnsupportedOperationError } from '../errors';
+import {
+  CaptureError,
+  DISPLAY_MEDIA_OPTIONS,
+  MixGraph,
+  classifyDisplayError,
+  classifyMicrophoneError,
+  detectBrowserCapture,
+  microphoneConstraints,
+  surfaceOf,
+  type AudioContextConstructor,
+  type BrowserCaptureCapabilities,
+  type CaptureDescription,
+  type CaptureMediaDevices,
+  type CaptureMode,
+} from './capture';
+
+export type { BrowserCaptureCapabilities, CaptureDescription, CaptureMode } from './capture';
 
 /**
  * Chunk cadence. MediaRecorder emits one encoded piece per timeslice; each
@@ -36,19 +53,9 @@ export function selectRecordingMimeType(isTypeSupported: (type: string) => boole
   }) ?? null;
 }
 
-export class RecordingPermissionError extends Error {
-  readonly reason: 'permission-denied' | 'no-microphone' | 'microphone-busy';
-
-  constructor(reason: RecordingPermissionError['reason']) {
-    super({
-      'permission-denied': 'Microphone access was denied.',
-      'no-microphone': 'No microphone was found.',
-      'microphone-busy': 'The microphone could not be started.',
-    }[reason]);
-    this.name = 'RecordingPermissionError';
-    this.reason = reason;
-  }
-}
+/** Capture could not start; `reason` says which step failed (see CaptureFailure). */
+export const RecordingPermissionError = CaptureError;
+export type RecordingPermissionError = CaptureError;
 
 export interface RecordedChunk {
   index: number;
@@ -82,20 +89,44 @@ export interface RecorderConstructor {
 }
 
 export interface BrowserMediaEnvironment {
-  mediaDevices?: Pick<MediaDevices, 'getUserMedia' | 'enumerateDevices'>;
+  mediaDevices?: CaptureMediaDevices & Pick<MediaDevices, 'enumerateDevices'>;
   MediaRecorder?: RecorderConstructor;
+  /** Web Audio, used only to mix microphone + shared audio. */
+  AudioContext?: AudioContextConstructor;
+  MediaStream?: new (tracks: MediaStreamTrack[]) => MediaStream;
   now: () => number;
   timesliceMs: number;
 }
 
 export function defaultBrowserEnvironment(): BrowserMediaEnvironment {
-  const scope = globalThis as unknown as { navigator?: Navigator; MediaRecorder?: RecorderConstructor };
+  const scope = globalThis as unknown as {
+    navigator?: Navigator; MediaRecorder?: RecorderConstructor; AudioContext?: AudioContextConstructor;
+    webkitAudioContext?: AudioContextConstructor; MediaStream?: new (tracks: MediaStreamTrack[]) => MediaStream;
+  };
   return {
-    mediaDevices: scope.navigator?.mediaDevices,
+    mediaDevices: scope.navigator?.mediaDevices as BrowserMediaEnvironment['mediaDevices'],
     MediaRecorder: scope.MediaRecorder,
+    AudioContext: scope.AudioContext ?? scope.webkitAudioContext,
+    MediaStream: scope.MediaStream,
     now: () => Date.now(),
     timesliceMs: RECORDING_TIMESLICE_MS,
   };
+}
+
+/** Streams acquired for one recording (before or while recording). */
+interface CaptureSession {
+  mode: CaptureMode;
+  /** The stream MediaRecorder records: the microphone, the shared audio, or the mix. */
+  output: MediaStream;
+  microphone: MediaStream | null;
+  shared: MediaStream | null;
+  graph: MixGraph | null;
+  description: CaptureDescription;
+}
+
+export interface CapturePreparation {
+  mode: CaptureMode;
+  microphoneDeviceName: string | null;
 }
 
 type Phase = 'idle' | 'starting' | 'recording' | 'paused' | 'stopping';
@@ -124,7 +155,7 @@ export class BrowserRecordingClient implements RecordingClient {
   readonly capabilities: RecordingCapabilities;
   private readonly env: BrowserMediaEnvironment;
   private phase: Phase = 'idle';
-  private stream: MediaStream | null = null;
+  private capture: CaptureSession | null = null;
   private recorder: RecorderLike | null = null;
   private selectedMime: string | null;
   private chunkIndex = 0;
@@ -139,21 +170,30 @@ export class BrowserRecordingClient implements RecordingClient {
     starting: new Emitter<void>(), started: new Emitter<void>(), stopped: new Emitter<RecordingStoppedEvent>(),
     paused: new Emitter<void>(), resumed: new Emitter<void>(), chunk: new Emitter<RecordedChunk>(),
     microphoneUnavailable: new Emitter<void>(), error: new Emitter<string>(),
+    captureChanged: new Emitter<CaptureDescription | null>(), warning: new Emitter<string>(),
   };
+  /** Feature-detected browser capture support (also in capabilities.browserCapture). */
+  readonly browserCapture: BrowserCaptureCapabilities;
 
   constructor(env: BrowserMediaEnvironment = defaultBrowserEnvironment()) {
     this.env = env;
     this.selectedMime = env.MediaRecorder ? selectRecordingMimeType((type) => env.MediaRecorder!.isTypeSupported(type)) : null;
     const canRecord = Boolean(env.mediaDevices?.getUserMedia && env.MediaRecorder && this.selectedMime);
     const pauseSupported = Boolean(env.MediaRecorder && typeof env.MediaRecorder.prototype?.pause === 'function');
+    this.browserCapture = detectBrowserCapture({
+      mediaDevices: env.mediaDevices, canRecord: Boolean(env.MediaRecorder && this.selectedMime), AudioContext: env.AudioContext,
+      hasMediaStream: Boolean(env.MediaStream),
+    });
+    const shared = this.browserCapture.modes.some((mode) => mode !== 'microphone');
     this.capabilities = {
       microphoneCapture: canRecord,
-      systemAudioCapture: 'unavailable',
+      systemAudioCapture: shared ? 'display-media' : 'unavailable',
       deviceEnumeration: canRecord && env.mediaDevices?.enumerateDevices ? 'input-only' : 'unavailable',
       microphoneHotSwap: 'unavailable',
       audioLevelMonitoring: false,
       pauseResume: canRecord && pauseSupported,
-      tabCapture: false,
+      tabCapture: shared,
+      browserCapture: this.browserCapture,
     };
   }
 
@@ -169,6 +209,20 @@ export class BrowserRecordingClient implements RecordingClient {
 
   onRecorderError(callback: (message: string) => void): () => void {
     return this.events.error.on(callback);
+  }
+
+  /** Sources being captured; null when idle. Changes when a source stops. */
+  onCaptureChanged(callback: (capture: CaptureDescription | null) => void): () => void {
+    return this.events.captureChanged.on(callback);
+  }
+
+  /** Non-fatal problems during a recording (e.g. tab sharing stopped). */
+  onCaptureWarning(callback: (message: string) => void): () => void {
+    return this.events.warning.on(callback);
+  }
+
+  getCapture(): CaptureDescription | null {
+    return this.capture ? { ...this.capture.description } : null;
   }
 
   /** Summary of the last completed recording (after stop). */
@@ -220,36 +274,109 @@ export class BrowserRecordingClient implements RecordingClient {
     return null;
   }
 
+  /**
+   * Acquires the sources for a mode. Call it directly from the user's click:
+   * the share picker is requested first, before anything else is awaited,
+   * because browsers only allow getDisplayMedia (and starting audio) during
+   * a user gesture. Then the microphone, then the mix. On failure everything
+   * acquired so far is released.
+   */
+  async prepare(options: CapturePreparation): Promise<CaptureDescription> {
+    if (this.phase !== 'idle' || this.capture) throw new Error('A recording is already in progress');
+    return this.acquire(options);
+  }
+
+  private async acquire(options: CapturePreparation): Promise<CaptureDescription> {
+    const { mode } = options;
+    if (!this.browserCapture.modes.includes(mode)) {
+      if (mode === 'microphone') throw new UnsupportedOperationError('Microphone recording');
+      throw new CaptureError(this.browserCapture.displayCapture ? 'audio-context' : 'display-unsupported');
+    }
+    const devices = this.env.mediaDevices!;
+    const wantsMicrophone = mode !== 'shared';
+    // Both started synchronously, inside the gesture.
+    const displayRequest = mode !== 'microphone' ? Promise.resolve().then(() => devices.getDisplayMedia!(DISPLAY_MEDIA_OPTIONS)) : null;
+    const graphRequest = mode === 'microphone+shared' ? MixGraph.create(this.env.AudioContext!) : null;
+    // Avoid unhandled rejections while the other request is awaited.
+    graphRequest?.catch(() => {});
+    displayRequest?.catch(() => {});
+
+    let shared: MediaStream | null = null;
+    let microphone: MediaStream | null = null;
+    let graph: MixGraph | null = null;
+    const description: CaptureDescription = { mode, microphone: false, shared: null };
+    try {
+      if (displayRequest) {
+        try {
+          shared = await displayRequest;
+        } catch (error) {
+          throw new CaptureError(classifyDisplayError(error));
+        }
+        description.shared = surfaceOf(shared);
+        const audio = shared.getAudioTracks();
+        // Voxa needs audio only: stop the video right away (browsers keep the
+        // audio track running; verified in Chromium).
+        shared.getVideoTracks().forEach((track) => track.stop());
+        if (audio.length === 0) throw new CaptureError('no-shared-audio');
+        shared = new this.env.MediaStream!(audio);
+      }
+      if (wantsMicrophone) {
+        const deviceId = options.microphoneDeviceName ? this.deviceIds.get(options.microphoneDeviceName) : undefined;
+        try {
+          microphone = await devices.getUserMedia({ audio: microphoneConstraints(deviceId), video: false });
+        } catch (error) {
+          throw new CaptureError(classifyMicrophoneError(error));
+        }
+        description.microphone = true;
+      }
+      if (graphRequest) {
+        graph = await graphRequest;
+        graph.add('microphone', microphone!);
+        graph.add('shared', shared!);
+      }
+    } catch (error) {
+      shared?.getTracks().forEach((track) => track.stop());
+      microphone?.getTracks().forEach((track) => track.stop());
+      const pending = graph ?? (graphRequest ? await graphRequest.catch(() => null) : null);
+      await pending?.close();
+      throw error;
+    }
+    const output = graph ? graph.stream : mode === 'shared' ? shared! : microphone!;
+    this.capture = { mode, output, microphone, shared, graph, description };
+    return { ...description };
+  }
+
+  /** Releases sources acquired by prepare() when the recording does not start. */
+  async releasePrepared(): Promise<void> {
+    if (this.phase !== 'idle') return;
+    await this.releaseCapture();
+  }
+
   async start(input: RecordingStartOptions): Promise<void> {
     if (this.phase !== 'idle') throw new Error('A recording is already in progress');
     if (!this.capabilities.microphoneCapture) throw new UnsupportedOperationError('Microphone recording');
-    if (input.systemAudioDeviceName) throw new UnsupportedOperationError('System audio capture');
+    if (input.systemAudioDeviceName) throw new UnsupportedOperationError('System audio device selection (use a capture mode)');
     this.phase = 'starting';
     this.events.starting.emit();
-    let stream: MediaStream;
-    try {
-      const deviceId = input.microphoneDeviceName ? this.deviceIds.get(input.microphoneDeviceName) : undefined;
-      stream = await this.env.mediaDevices!.getUserMedia({
-        audio: deviceId ? { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true } : { echoCancellation: true, noiseSuppression: true },
-        video: false,
-      });
-    } catch (error) {
-      this.phase = 'idle';
-      const name = (error as { name?: string })?.name;
-      if (name === 'NotAllowedError' || name === 'SecurityError') throw new RecordingPermissionError('permission-denied');
-      if (name === 'NotFoundError' || name === 'OverconstrainedError') throw new RecordingPermissionError('no-microphone');
-      throw new RecordingPermissionError('microphone-busy');
+    if (!this.capture) {
+      try {
+        await this.acquire({ mode: input.captureMode ?? 'microphone', microphoneDeviceName: input.microphoneDeviceName });
+      } catch (error) {
+        this.phase = 'idle';
+        throw error;
+      }
     }
+    const capture = this.capture!;
 
     let recorder: RecorderLike;
     try {
-      recorder = new this.env.MediaRecorder!(stream, { mimeType: this.selectedMime!, audioBitsPerSecond: 64_000 });
+      recorder = new this.env.MediaRecorder!(capture.output, { mimeType: this.selectedMime!, audioBitsPerSecond: capture.mode === 'microphone' ? 64_000 : 96_000 });
     } catch {
-      stream.getTracks().forEach((track) => track.stop());
+      await this.releaseCapture();
       this.phase = 'idle';
+      if (capture.mode !== 'microphone') throw new CaptureError('encoder');
       throw new UnsupportedOperationError(`Recording as ${this.selectedMime}`);
     }
-    this.stream = stream;
     this.recorder = recorder;
     this.selectedMime = recorder.mimeType || this.selectedMime;
     this.chunkIndex = 0;
@@ -267,23 +394,55 @@ export class BrowserRecordingClient implements RecordingClient {
       void this.stop();
     };
     recorder.onstop = () => this.finish();
-    for (const track of stream.getAudioTracks()) {
-      track.onended = () => {
-        // Unplugged or revoked microphone: keep what was recorded.
-        this.events.microphoneUnavailable.emit();
-        void this.stop();
-      };
-    }
+    this.watchSources(capture);
     try {
       recorder.start(this.env.timesliceMs);
     } catch {
-      this.releaseDevices();
+      this.detachRecorder();
+      await this.releaseCapture();
       this.phase = 'idle';
-      throw new RecordingPermissionError('microphone-busy');
+      throw capture.mode === 'microphone' ? new CaptureError('microphone-busy') : new CaptureError('encoder');
     }
     this.startedAt = this.env.now();
     this.phase = 'recording';
     this.events.started.emit();
+    this.events.captureChanged.emit({ ...capture.description });
+  }
+
+  /**
+   * Source loss policy (predictable, documented):
+   * - microphone mode: a lost microphone stops the recording (chunks kept);
+   * - microphone + shared: whichever source ends is removed from the mix and
+   *   the recording continues with the other, with a warning; when both are
+   *   gone it stops;
+   * - shared mode: when sharing stops, the recording stops.
+   */
+  private watchSources(capture: CaptureSession): void {
+    const onEnded = (kind: 'microphone' | 'shared') => {
+      if (this.capture !== capture || (this.phase !== 'recording' && this.phase !== 'paused')) return;
+      if (kind === 'microphone' && !capture.description.microphone) return;
+      if (kind === 'shared' && !capture.description.shared) return;
+      if (kind === 'microphone') {
+        capture.description.microphone = false;
+        this.events.microphoneUnavailable.emit();
+      } else {
+        capture.description.shared = null;
+      }
+      const remaining = capture.description.microphone || capture.description.shared !== null;
+      if (capture.graph && remaining) {
+        capture.graph.remove(kind);
+        this.events.warning.emit(kind === 'shared'
+          ? 'Tab audio sharing stopped. Recording continues with your microphone only.'
+          : 'Your microphone stopped. Recording continues with the shared audio only.');
+        this.events.captureChanged.emit({ ...capture.description });
+        return;
+      }
+      if (kind === 'shared') this.events.warning.emit('Sharing stopped, so the recording ended.');
+      this.events.captureChanged.emit({ ...capture.description });
+      void this.stop();
+    };
+    capture.microphone?.getAudioTracks().forEach((track) => { track.onended = () => onEnded('microphone'); });
+    capture.shared?.getAudioTracks().forEach((track) => { track.onended = () => onEnded('shared'); });
   }
 
   /** Stops recording; resolves after the final chunk has been emitted. */
@@ -312,18 +471,33 @@ export class BrowserRecordingClient implements RecordingClient {
     waiters.forEach((resolve) => resolve());
   }
 
-  private releaseDevices(): void {
+  private detachRecorder(): void {
     if (this.recorder) {
       this.recorder.ondataavailable = null;
       this.recorder.onerror = null;
       this.recorder.onstop = null;
     }
-    this.stream?.getTracks().forEach((track) => {
-      track.onended = null;
-      track.stop();
-    });
-    this.stream = null;
     this.recorder = null;
+  }
+
+  /** Stops every captured track and closes the mixing graph. */
+  private async releaseCapture(): Promise<void> {
+    const capture = this.capture;
+    this.capture = null;
+    if (!capture) return;
+    for (const stream of [capture.microphone, capture.shared, capture.output]) {
+      stream?.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+    }
+    await capture.graph?.close();
+  }
+
+  private releaseDevices(): void {
+    this.detachRecorder();
+    void this.releaseCapture();
+    this.events.captureChanged.emit(null);
   }
 
   async pause(): Promise<void> {

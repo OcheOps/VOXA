@@ -1,4 +1,4 @@
-import type { BrowserRecordingClient } from '@/clients/browser/recording-client';
+import type { BrowserRecordingClient, CaptureDescription, CaptureMode } from '@/clients/browser/recording-client';
 import type { RecordingUploadCoordinator } from './upload-coordinator';
 
 export type SessionPhase = 'idle' | 'starting' | 'recording' | 'paused' | 'stopping';
@@ -8,19 +8,24 @@ export interface SessionState {
   meetingId: string | null;
   mediaAssetId: string | null;
   error: string | null;
+  /** What is being captured right now (null when idle). */
+  capture: CaptureDescription | null;
+  /** Non-fatal problem during recording, e.g. tab sharing stopped. */
+  warning: string | null;
 }
 
 /**
  * Joins one browser recording to one durable upload:
  *
- *   start: server RecordingSession + MediaAsset -> microphone -> chunks -> coordinator
+ *   start: sources (share picker first, inside the click) -> server RecordingSession
+ *          + MediaAsset -> chunks -> coordinator
  *   stop (by the user, a lost microphone or a recorder error): summary -> coordinator.complete
  *
  * Capture stays in BrowserRecordingClient; persistence and upload stay in
  * RecordingUploadCoordinator.
  */
 export class RecordingSessionController {
-  private state: SessionState = { phase: 'idle', meetingId: null, mediaAssetId: null, error: null };
+  private state: SessionState = { phase: 'idle', meetingId: null, mediaAssetId: null, error: null, capture: null, warning: null };
   private readonly listeners = new Set<() => void>();
   private detach: Array<() => void> = [];
   private completion: Promise<void> | null = null;
@@ -39,18 +44,30 @@ export class RecordingSessionController {
     this.listeners.forEach((listener) => listener());
   }
 
-  async start(meetingId: string, microphoneDeviceName: string | null): Promise<void> {
+  /**
+   * Call directly from the user's click: the share picker (for meeting-tab
+   * modes) must be requested before anything else is awaited.
+   */
+  async start(meetingId: string, microphoneDeviceName: string | null, captureMode: CaptureMode = 'microphone'): Promise<void> {
     if (this.state.phase !== 'idle') return;
     const mimeType = this.recorder.mimeType;
     if (!mimeType) {
       this.set({ error: 'This browser cannot record audio.' });
       return;
     }
-    this.set({ phase: 'starting', meetingId, mediaAssetId: null, error: null });
+    this.set({ phase: 'starting', meetingId, mediaAssetId: null, error: null, warning: null, capture: null });
+    const prepared = this.recorder.prepare({ mode: captureMode, microphoneDeviceName });
+    try {
+      await prepared;
+    } catch (error) {
+      this.set({ phase: 'idle', error: error instanceof Error ? error.message : 'Recording could not start.' });
+      return;
+    }
     let mediaAssetId: string;
     try {
       mediaAssetId = (await this.uploads.begin(meetingId, mimeType)).mediaAssetId;
     } catch {
+      await this.recorder.releasePrepared();
       this.set({ phase: 'idle', error: 'Could not start a recording on the server. Check your connection and try again.' });
       return;
     }
@@ -63,12 +80,15 @@ export class RecordingSessionController {
       this.recorder.onPaused(() => this.set({ phase: 'paused' })),
       this.recorder.onResumed(() => this.set({ phase: 'recording' })),
       this.recorder.onStopped(() => { this.completion = this.completeUpload(mediaAssetId); }),
+      this.recorder.onCaptureChanged((capture) => { if (capture) this.set({ capture }); }),
+      this.recorder.onCaptureWarning((warning) => this.set({ warning })),
     ];
     try {
-      await this.recorder.start({ microphoneDeviceName, systemAudioDeviceName: null, meetingName: meetingId });
-      this.set({ phase: 'recording', mediaAssetId });
+      await this.recorder.start({ microphoneDeviceName, systemAudioDeviceName: null, meetingName: meetingId, captureMode });
+      this.set({ phase: 'recording', mediaAssetId, capture: this.recorder.getCapture() });
     } catch (error) {
       this.release();
+      await this.recorder.releasePrepared();
       await this.uploads.discard(mediaAssetId);
       this.set({ phase: 'idle', mediaAssetId: null, error: error instanceof Error ? error.message : 'Recording could not start.' });
     }
@@ -94,7 +114,7 @@ export class RecordingSessionController {
   private async completeUpload(mediaAssetId: string): Promise<void> {
     this.release();
     const summary = this.recorder.getLastSummary();
-    this.set({ phase: 'idle' });
+    this.set({ phase: 'idle', capture: null });
     if (summary && summary.chunkCount > 0) {
       await this.uploads.complete(mediaAssetId, summary.chunkCount, summary.durationSeconds);
     } else {

@@ -230,7 +230,10 @@ API over HTTPS, because bearer tokens over plain HTTP are exposed.
   and processing notifications.
 - Provider API keys: configured/masked state, set or replace, remove. Keys
   are never shown again.
-- Microphone recording on the meeting page:
+- Recording on the meeting page:
+  - microphone only, meeting tab + microphone, or meeting tab only, where
+    the browser supports sharing tab audio (see
+    `docs/voxa-web-meeting-capture.md`);
   - start, pause/resume and stop, with a consent reminder;
   - parts are saved on the device while offline, uploads resume
     automatically, and recordings are recovered after a reload;
@@ -244,7 +247,8 @@ API over HTTPS, because bearer tokens over plain HTTP are exposed.
 
 ## 11. Unsupported in Voxa Web (by design, for now)
 
-Tab or system audio capture, file import, summary and transcript editing,
+Capturing audio the browser cannot share (desktop meeting apps, native
+call apps, tabs the user did not select), file import, summary and transcript editing,
 transcript search, diarization, chat with a meeting,
 local models, the recordings folder, file reveal, the tray, the updater,
 OS notifications, workspace selection, and invitations. Capabilities report
@@ -252,10 +256,10 @@ these truthfully and the UI hides them or explains why they are missing.
 
 ## 12. Future work
 
-- **Tab and system audio:** microphone recording exists (see
-  `docs/voxa-web-recording.md`). Next is `getDisplayMedia` for tab audio
-  where the browser allows it, reported as
-  `systemAudioCapture: 'display-media'`.
+- **Meeting capture beyond the browser:** tab audio capture exists (see
+  `docs/voxa-web-meeting-capture.md`). A browser extension or native
+  companion could capture without the share picker or from desktop/mobile
+  meeting apps.
 - **Desktop views on capabilities:** gradually move the desktop Sidebar and
   meeting page off direct `invoke` calls, so both runtimes share more
   presentation.

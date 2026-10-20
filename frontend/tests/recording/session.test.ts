@@ -70,11 +70,15 @@ describe('RecordingSessionController', () => {
     expect(uploads.getJob('med_1')?.phase).toBe('ready');
   });
 
-  test('denied microphone discards the server recording and local state', async () => {
-    const { session, deleted, store } = setup(async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); });
+  test('denied microphone fails before any server recording or local state exists', async () => {
+    let created = 0;
+    const { session, deleted, store, media } = setup(async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); });
+    const create = media.createRecording;
+    media.createRecording = async (...args) => { created++; return create(...args); };
     await session.start('mtg_1', null);
     expect(session.getState()).toMatchObject({ phase: 'idle', error: 'Microphone access was denied.' });
-    expect(deleted).toEqual(['med_1']);
+    expect(created).toBe(0);
+    expect(deleted).toEqual([]);
     expect(await store.listRecordings()).toEqual([]);
   });
 
@@ -88,10 +92,22 @@ describe('RecordingSessionController', () => {
     expect(finalized).toEqual([{ count: 1, duration: 0 }]);
   });
 
-  test('cannot start without reaching the server', async () => {
-    const { session } = setup(async () => stream(), { failCreate: true });
+  test('cannot start without reaching the server, and releases the microphone', async () => {
+    let stopped = false;
+    const t = { stop() { stopped = true; }, onended: null as null | (() => void) };
+    const { session } = setup(async () => stream(t), { failCreate: true });
     await session.start('mtg_1', null);
     expect(session.getState().phase).toBe('idle');
     expect(session.getState().error).toContain('Could not start a recording');
+    expect(stopped).toBe(true);
+  });
+
+  test('reports what is captured while recording', async () => {
+    const { session } = setup(async () => stream());
+    await session.start('mtg_1', null, 'microphone');
+    expect(session.getState().capture).toEqual({ mode: 'microphone', microphone: true, shared: null });
+    await session.stop();
+    await settle();
+    expect(session.getState().capture).toBeNull();
   });
 });

@@ -94,7 +94,7 @@ describe.skipIf(!enabled)('Voxa Web recording in a real browser', () => {
     const { mimeType, capabilities } = await openHarness();
     expect(mimeType).toBe('audio/webm;codecs=opus');
     expect(capabilities.microphoneCapture).toBe(true);
-    expect(capabilities.tabCapture).toBe(false);
+    expect(capabilities.tabCapture).toBe(true); // Chromium can share tab audio (see capture.browser.test.ts)
 
     const meetingId = await chrome.evaluate<string>(`harness.createMeeting('Browser E2E')`);
     const started = await chrome.evaluate<{ mediaAssetId: string; phase: string }>(`harness.start(${JSON.stringify(meetingId)})`);

@@ -37,13 +37,44 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** Deterministic sources: oscillators stand in for the microphone and the shared tab. */
+interface Synthetic { micHz: number; micAmplitude: number; tabHz: number; tabAmplitude: number }
+const syntheticTracks: MediaStreamTrack[] = [];
+
+function oscillatorStream(context: AudioContext, hz: number, amplitude: number): MediaStream {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const destination = context.createMediaStreamDestination();
+  oscillator.frequency.value = hz;
+  gain.gain.value = amplitude;
+  oscillator.connect(gain).connect(destination);
+  oscillator.start();
+  syntheticTracks.push(...destination.stream.getAudioTracks());
+  return destination.stream;
+}
+
+function syntheticDevices(synthetic: Synthetic) {
+  const context = new AudioContext();
+  return {
+    getUserMedia: async () => oscillatorStream(context, synthetic.micHz, synthetic.micAmplitude),
+    getDisplayMedia: async () => {
+      const stream = oscillatorStream(context, synthetic.tabHz, synthetic.tabAmplitude);
+      const canvas = document.createElement('canvas');
+      stream.addTrack(canvas.captureStream(1).getVideoTracks()[0]);
+      return stream;
+    },
+    enumerateDevices: async () => [],
+    getSupportedConstraints: () => navigator.mediaDevices.getSupportedConstraints(),
+  };
+}
+
 let coordinator: RecordingUploadCoordinator;
 let session: RecordingSessionController;
 let recorder: BrowserRecordingClient;
 let apiUrl = '';
 
 (window as any).harness = {
-  setup(api: string, timesliceMs: number) {
+  setup(api: string, timesliceMs: number, synthetic?: Synthetic) {
     apiUrl = api;
     const transport = new HttpTransport({ baseUrl: api, getAccessToken: () => null });
     const media = new HttpMediaClient(transport, api);
@@ -53,7 +84,8 @@ let apiUrl = '';
       onOnline: (callback) => { window.addEventListener('online', callback); return () => window.removeEventListener('online', callback); },
       backoffMs: [200, 400, 800],
     });
-    recorder = new BrowserRecordingClient({ ...defaultBrowserEnvironment(), timesliceMs });
+    const env = defaultBrowserEnvironment();
+    recorder = new BrowserRecordingClient({ ...env, ...(synthetic ? { mediaDevices: syntheticDevices(synthetic) as never } : {}), timesliceMs });
     recorder.onChunk((chunk) => {
       const id = session.getState().mediaAssetId ?? (coordinator.getJobs().at(-1)?.mediaAssetId ?? '');
       void keepCopy(id, chunk.index, chunk.data);
@@ -65,10 +97,15 @@ let apiUrl = '';
     const response = await fetch(`${apiUrl}/api/v1/meetings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
     return (await response.json()).meeting.id as string;
   },
-  async start(meetingId: string) {
-    await session.start(meetingId, null);
+  async start(meetingId: string, mode: 'microphone' | 'microphone+shared' | 'shared' = 'microphone') {
+    await session.start(meetingId, null, mode);
     return session.getState();
   },
+  state() { return session.getState(); },
+  /** Simulates the browser ending a synthetic source (e.g. "Stop sharing"). */
+  endSynthetic(index: number) { syntheticTracks[index]?.dispatchEvent(new Event('ended')); },
+  browserCapture() { return recorder.browserCapture; },
+  heapBytes() { return (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? null; },
   async stop() {
     await session.stop();
     return session.getState();

@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Mic, Pause, Play, Square } from 'lucide-react';
+import { Mic, MonitorUp, Pause, Play, Square } from 'lucide-react';
+import type { CaptureMode } from '@/clients/browser/recording-client';
 import { useVoxaClient } from '@/clients';
 import type { RecordingDevice } from '@/clients/contracts';
 import { Button } from '@/components/ui/button';
 import { useServerCapabilities, useWebRuntime } from '../context';
 import { formatDuration, useElapsedSeconds, useRecordingSession, useUnloadGuard, useUploadJobs } from './hooks';
 import type { UploadJobState } from './upload-coordinator';
+import { MEETING_SITE_HINTS, MODE_DESCRIPTIONS, MODE_LABELS, SHARE_INSTRUCTIONS, availableModes, captureSummary, sharedAudioNote } from './capture-ui';
 
 export function uploadStatusText(job: UploadJobState): string {
   const local = job.pendingChunks > 0 ? `${job.pendingChunks} part${job.pendingChunks === 1 ? '' : 's'} saved on this device` : null;
@@ -36,6 +38,9 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
   const jobs = useUploadJobs().filter((job) => job.meetingId === meetingId && job.phase !== 'ready');
   const [devices, setDevices] = useState<RecordingDevice[]>([]);
   const [device, setDevice] = useState<string>('');
+  const modes = availableModes(recording.capabilities.browserCapture);
+  const [mode, setMode] = useState<CaptureMode>('microphone');
+  const sharing = mode !== 'microphone';
   const active = session.meetingId === meetingId && session.phase !== 'idle';
   const otherMeetingRecording = session.phase !== 'idle' && session.meetingId !== meetingId;
   const elapsed = useElapsedSeconds(active && (session.phase === 'recording' || session.phase === 'paused'));
@@ -59,7 +64,7 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
           <div className="flex items-center gap-3">
             <span className={`h-3 w-3 rounded-full bg-red-600 ${session.phase === 'recording' ? 'animate-pulse' : ''}`} aria-hidden />
             <span className="font-medium text-red-800">
-              {session.phase === 'paused' ? 'Paused' : session.phase === 'starting' ? 'Starting…' : session.phase === 'stopping' ? 'Stopping…' : 'Recording'} {formatDuration(elapsed)}
+              {session.phase === 'paused' ? 'Paused' : session.phase === 'starting' ? 'Starting…' : session.phase === 'stopping' ? 'Stopping…' : captureSummary(session.capture)} {formatDuration(elapsed)}
             </span>
             <span className="ml-auto flex gap-2">
               {recording.capabilities.pauseResume && session.phase === 'recording' && (
@@ -73,20 +78,58 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
               )}
             </span>
           </div>
+          {session.capture?.shared && (
+            <p className="text-xs font-medium text-red-800">
+              <MonitorUp className="mr-1 inline h-3 w-3" aria-hidden />Audio from the shared {session.capture.shared.surface === 'browser' ? 'tab' : 'source'} is being recorded, including other participants. Stop sharing from the browser bar at any time.
+            </p>
+          )}
+          {session.warning && <p className="text-xs text-amber-800" role="alert">{session.warning}</p>}
           <p className="text-xs text-red-700">{config.recordingNotice}</p>
         </div>
       ) : (
+        <div className="space-y-2">
+        {modes.length > 1 && (
+          <fieldset className="space-y-1">
+            <legend className="text-xs font-medium text-gray-700">What to record</legend>
+            <div className="flex flex-wrap gap-3">
+              {modes.map((option) => (
+                <label key={option} className="flex items-center gap-1 text-sm text-gray-800" title={MODE_DESCRIPTIONS[option]}>
+                  <input type="radio" name={`capture-mode-${meetingId}`} value={option} checked={mode === option} onChange={() => setMode(option)} />
+                  {MODE_LABELS[option]}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500">{MODE_DESCRIPTIONS[mode]}</p>
+          </fieldset>
+        )}
+        {sharing && (
+          <div className="space-y-1 rounded-md bg-blue-50 p-2 text-xs text-blue-900">
+            <p>{SHARE_INSTRUCTIONS}</p>
+            {recording.capabilities.browserCapture && sharedAudioNote(recording.capabilities.browserCapture) && (
+              <p>{sharedAudioNote(recording.capabilities.browserCapture)}</p>
+            )}
+            <details>
+              <summary className="cursor-pointer">Tips for Google Meet, Teams, Zoom, Webex and WhatsApp Web</summary>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                {MEETING_SITE_HINTS.map((hint) => (
+                  <li key={hint.id}><span className="font-medium">{hint.name}</span> ({hint.hosts}): {hint.tip}</li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
-          {devices.length > 1 && (
+          {mode !== 'shared' && devices.length > 1 && (
             <select className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" value={device} onChange={(e) => setDevice(e.target.value)} aria-label="Microphone">
               <option value="">Default microphone</option>
               {devices.map((d) => <option key={d.name} value={d.name}>{d.name}</option>)}
             </select>
           )}
-          <Button onClick={() => void recordingSession.start(meetingId, device || null)} disabled={otherMeetingRecording}>
-            <Mic className="mr-2 h-4 w-4" />Start recording
+          <Button onClick={() => void recordingSession.start(meetingId, device || null, mode)} disabled={otherMeetingRecording}>
+            {sharing ? <MonitorUp className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}{sharing ? 'Choose tab and start recording' : 'Start recording'}
           </Button>
           {otherMeetingRecording && <span className="text-xs text-gray-500">Another meeting is being recorded.</span>}
+        </div>
         </div>
       )}
       {session.error && session.meetingId === meetingId && <p className="text-sm text-red-700" role="alert">{session.error}</p>}

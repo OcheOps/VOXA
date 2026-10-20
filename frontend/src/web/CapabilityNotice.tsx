@@ -15,7 +15,7 @@ export function CapabilityNotice() {
   const mediaStorage = Boolean(server?.mediaStorage.available && client.media.capabilities.urlPlayback);
   if (!client.recording.capabilities.microphoneCapture || !mediaStorage) missing.push('recording');
   if (!mediaStorage) missing.push('audio storage and playback');
-  if (client.recording.capabilities.microphoneCapture && !client.recording.capabilities.tabCapture) missing.push('tab and system audio capture');
+  if (client.recording.capabilities.microphoneCapture && !client.recording.capabilities.tabCapture) missing.push('meeting tab audio capture (this browser cannot share tab audio)');
   if (!server?.transcription.available || client.transcription.capabilities.execution === 'unavailable') missing.push('transcription');
   if (!server?.summary.available || client.summaries.capabilities.execution === 'unavailable') missing.push('summaries');
   if (missing.length === 0) return null;

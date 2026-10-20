@@ -71,7 +71,10 @@ export interface RecordingCapabilities {
   microphoneHotSwap: 'automatic' | 'manual' | 'unavailable';
   audioLevelMonitoring: boolean;
   pauseResume: boolean;
+  /** The runtime can capture audio from a user-selected tab/window/screen. */
   tabCapture: boolean;
+  /** Browser runtimes: feature-detected microphone/shared-audio capture modes. */
+  browserCapture?: import('./browser/capture').BrowserCaptureCapabilities;
 }
 
 export interface RecordingDevice {
@@ -83,6 +86,8 @@ export interface RecordingStartOptions {
   microphoneDeviceName: string | null;
   systemAudioDeviceName: string | null;
   meetingName: string;
+  /** Browser runtimes: what to capture (default: microphone). Ignored by the desktop app. */
+  captureMode?: import('./browser/capture').CaptureMode;
 }
 
 export interface RecordingStoppedEvent {

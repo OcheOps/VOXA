@@ -6,7 +6,7 @@ import { useWebRuntime } from '../context';
 import type { SessionState } from './session';
 import type { UploadJobState } from './upload-coordinator';
 
-const idleSession: SessionState = { phase: 'idle', meetingId: null, mediaAssetId: null, error: null };
+const idleSession: SessionState = { phase: 'idle', meetingId: null, mediaAssetId: null, error: null, capture: null, warning: null };
 const noop = () => () => {};
 
 export function useRecordingSession(): SessionState {

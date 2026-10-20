@@ -15,7 +15,7 @@ Finalized recordings are then remuxed and transcribed on the server (see
 
 | Piece | Responsibility | File |
 | --- | --- | --- |
-| `BrowserRecordingClient` | Microphone access, MediaRecorder lifecycle, chunk production, pause/resume, honest capabilities. Knows nothing about uploads. | `frontend/src/clients/browser/recording-client.ts` |
+| `BrowserRecordingClient` | Microphone and shared-tab capture (modes, mixing; see `docs/voxa-web-meeting-capture.md`), MediaRecorder lifecycle, chunk production, pause/resume, honest capabilities. Knows nothing about uploads. | `frontend/src/clients/browser/recording-client.ts`, `capture.ts` |
 | `RecordingUploadCoordinator` | Local persistence first, ordered single-flight uploads, retry/backoff, `online` resume, finalize, recovery after reload. Framework-free. | `frontend/src/web/recording/upload-coordinator.ts` |
 | `PendingChunkStore` | IndexedDB (`voxa-recordings`) storage for chunks not yet acknowledged by the server. | `frontend/src/web/recording/pending-store.ts` |
 | `RecordingSessionController` | Joins one recording to one upload; also completes uploads when the recorder stops on its own (lost microphone, recorder error). | `frontend/src/web/recording/session.ts` |
@@ -236,12 +236,13 @@ its media rows. The bytes are reclaimed by the next cleanup pass.
   Long offline periods could hit the quota (a chunk save failure is shown as
   an error).
 
-## 13. Future tab and system audio capture
+## 13. Tab and shared audio capture
 
-`getDisplayMedia({ audio: true })`, which gives tab audio in Chromium, could
-be mixed with the microphone in a `MediaStream` via Web Audio. It would be
-exposed as `tabCapture` and `systemAudioCapture: 'display-media'` in the
-recording capabilities. It is not implemented and is reported unavailable.
+Implemented: microphone + shared tab audio (Web Audio mix) and tab-only
+modes, feature-detected and exposed as `browserCapture`, `tabCapture` and
+`systemAudioCapture: 'display-media'`. Recordings still produce one
+MediaRecorder stream, so everything in this document applies unchanged.
+See `docs/voxa-web-meeting-capture.md`.
 
 ## 14. Future S3/MinIO storage
 

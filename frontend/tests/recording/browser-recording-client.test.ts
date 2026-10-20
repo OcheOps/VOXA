@@ -76,6 +76,7 @@ describe('MIME negotiation', () => {
     expect(client.capabilities).toEqual({
       microphoneCapture: true, systemAudioCapture: 'unavailable', deviceEnumeration: 'input-only', microphoneHotSwap: 'unavailable',
       audioLevelMonitoring: false, pauseResume: true, tabCapture: false,
+      browserCapture: { microphone: true, displayCapture: false, sharedAudio: 'unavailable', mixing: false, modes: ['microphone'] },
     });
     const unsupported = new BrowserRecordingClient({ now: () => 0, timesliceMs: 1 });
     expect(unsupported.capabilities.microphoneCapture).toBe(false);
