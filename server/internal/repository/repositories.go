@@ -76,7 +76,7 @@ type MediaRepository interface {
 // overwrite a newer attempt.
 type JobRepository interface {
 	// Enqueue adds a job; ErrConflict when an active job of the same type
-	// already exists for the media asset.
+	// already exists for the media asset (or, for summaries, the meeting).
 	Enqueue(ctx context.Context, job domain.ProcessingJob) error
 	// Claim leases up to limit runnable jobs: queued jobs whose run_after has
 	// passed, and running jobs whose lease expired (abandoned) with attempts
@@ -100,6 +100,20 @@ type JobRepository interface {
 	ListAssetJobs(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) ([]domain.ProcessingJob, error)
 	// FailExhausted marks abandoned running jobs with no attempts left as failed.
 	FailExhausted(ctx context.Context, now time.Time) (int, error)
+	// SaveCheckpoint stores resumable intermediate results for the running
+	// attempt; false when the job is no longer owned by it.
+	SaveCheckpoint(ctx context.Context, id domain.ProcessingJobID, attempt int, checkpoint []byte, now time.Time) (bool, error)
+}
+
+// SummaryRepository stores one current summary per meeting.
+type SummaryRepository interface {
+	// Promote stores summary as the meeting's summary, replacing any previous
+	// one, only while job jobID is still running under attempt (otherwise
+	// ErrConflict and nothing changes). The previous summary therefore stays
+	// until a newer job succeeds, and a stale or cancelled worker cannot
+	// overwrite a newer result.
+	Promote(ctx context.Context, summary domain.Summary, jobID domain.ProcessingJobID, attempt int) error
+	GetByMeeting(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) (domain.Summary, error)
 }
 
 // TranscriptRepository stores one current transcript per media asset.

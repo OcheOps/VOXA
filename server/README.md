@@ -86,6 +86,9 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | `VOXA_WHISPER_MODEL` | unset | Path to a whisper.cpp GGML model (e.g. `/var/lib/voxa/models/ggml-base.en.bin`). Enables server transcription when media storage and ffmpeg are available. Unset means transcription is unavailable. Never downloaded by the server. |
 | `VOXA_WHISPER_BIN` | `whisper-cli` | whisper.cpp CLI binary (name on `PATH` or absolute path). |
 | `VOXA_PROCESSING_WORKERS` | `1` | Concurrent processing jobs in this process (1–16). |
+| `VOXA_SUMMARY_PROVIDERS` | unset (none) | Comma-separated summary providers this server may call: `openai`, `claude`, `groq`, `openrouter`, `ollama`, `custom-openai`. Nothing is enabled by default. Workspaces pick provider/model among these and store their own API keys. |
+| `VOXA_OLLAMA_URL` | — | Required with `ollama`, e.g. `http://ollama:11434`. Private/loopback addresses are allowed; plaintext http to a remote host logs a warning. |
+| `VOXA_CUSTOM_OPENAI_URL` | — | Required with `custom-openai`: OpenAI-compatible API root (`/chat/completions` is appended). |
 | `VOXA_ALLOWED_ORIGINS` | unset | Comma-separated exact browser origins allowed to call the API cross-origin (Voxa Web), e.g. `https://voxa.example.com,http://localhost:3118`. Unset means no CORS headers at all. `*` is rejected. See `docs/voxa-web.md`. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
 | `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
@@ -195,6 +198,18 @@ Transcripts are stored per recording with ASR provenance and served at
 setup is logged and reported through capabilities; the server still starts.
 Full design and manual checklist:
 [`docs/server-processing.md`](../docs/server-processing.md).
+
+## Summaries
+
+With processing running and `VOXA_SUMMARY_PROVIDERS` set, `summary` jobs run
+in the same worker (migration 0006). A completed transcript is summarized
+automatically when the workspace enables auto-generation, or on
+`POST /api/v1/meetings/{id}/summary`; results are served at
+`GET /api/v1/meetings/{id}/summary` with transcript/provider/model/template
+provenance. Templates, prompts and chunking match the desktop app. Provider
+keys are the workspace's encrypted credentials, decrypted only inside the
+job. Design, security model and checklist:
+[`docs/server-summaries.md`](../docs/server-summaries.md).
 
 ## Migrations
 
@@ -351,8 +366,9 @@ With PostgreSQL:
   transaction (such as `CREATE INDEX CONCURRENTLY`) are not supported yet.
 - Outage classification is conservative. Unrecognized driver failures
   surface as `internal` (500) rather than `unavailable`.
-- Summaries are not implemented (capability unavailable). Transcription
-  has no diarization or speaker identification, and its quality has not been
-  evaluated on real meetings. Media is filesystem-only (no object storage).
+- Transcription has no diarization or speaker identification, and neither
+  transcription nor summary quality has been evaluated on real meetings.
+  Summary providers were exercised only against fakes in tests. Media is
+  filesystem-only (no object storage).
 - Desktop folders, audio devices, tray behavior, local model paths and other
   native settings are rejected as unknown configuration fields.

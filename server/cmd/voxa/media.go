@@ -90,12 +90,9 @@ func openMedia(ctx context.Context, logger *slog.Logger, getenv func(string) str
 		}
 	}()
 	options := []api.Option{api.WithMedia(service, signer)}
-	processingOption, wait, err := openProcessing(ctx, logger, getenv, store, files, service)
+	processingOptions, wait, err := openProcessing(ctx, logger, getenv, store, files, service)
 	if err != nil {
 		return nil, noWait, err
 	}
-	if processingOption != nil {
-		options = append(options, processingOption)
-	}
-	return options, wait, nil
+	return append(options, processingOptions...), wait, nil
 }

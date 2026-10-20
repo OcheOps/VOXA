@@ -18,7 +18,9 @@ type JobError struct {
 	Code      string
 	Message   string
 	Retryable bool
-	Err       error
+	// RetryAfter is a minimum delay requested by an external service.
+	RetryAfter time.Duration
+	Err        error
 }
 
 func (e *JobError) Error() string {
@@ -55,6 +57,9 @@ type Policy struct {
 var policies = map[domain.ProcessingJobType]Policy{
 	domain.JobRemux:         {MaxAttempts: 3, Backoff: []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute}},
 	domain.JobTranscription: {MaxAttempts: 3, Backoff: []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute}},
+	// Summaries call external providers: back off longer so a struggling
+	// provider is not hammered (Retry-After can extend this).
+	domain.JobSummary: {MaxAttempts: 3, Backoff: []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute}},
 }
 
 func (p Policy) delay(attempt int) time.Duration {

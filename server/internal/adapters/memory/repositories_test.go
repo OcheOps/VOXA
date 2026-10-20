@@ -41,10 +41,15 @@ func TestMediaRepositoryContract(t *testing.T) {
 }
 
 func memoryProcessingFixture(*testing.T) repositorytest.ProcessingFixture {
+	jobs := memory.NewJobRepository()
 	return repositorytest.ProcessingFixture{
-		Jobs: memory.NewJobRepository(), Transcripts: memory.NewTranscriptRepository(),
+		Jobs: jobs, Transcripts: memory.NewTranscriptRepository(), Summaries: memory.NewSummaryRepository(jobs),
 		AssetA1: "med_a1", AssetA2: "med_a2", AssetB: "med_b",
 	}
+}
+
+func TestSummaryRepositoryContract(t *testing.T) {
+	repositorytest.SummaryRepositoryContract(t, memoryProcessingFixture)
 }
 
 func TestJobRepositoryContract(t *testing.T) {

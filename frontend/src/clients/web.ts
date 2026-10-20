@@ -3,26 +3,28 @@ import { HttpConfigurationClient, HttpCredentialClient, HttpWorkspaceSettingsCli
 import { BrowserRecordingClient } from './browser/recording-client';
 import { HttpMediaClient } from './http/media-client';
 import { HttpMeetingClient } from './http/meeting-client';
+import { HttpSummaryClient } from './http/summary-client';
 import { HttpTranscriptionClient } from './http/transcription-client';
 import type { HttpTransport } from './http/transport';
-import { UnavailableSummaryClient } from './unavailable';
 
 /**
  * Web composition: server-backed meetings, configuration, credentials,
- * media and transcription; browser microphone recording; summaries remain
- * explicitly unavailable until server summary jobs exist. Nothing here imports Tauri.
+ * media, transcription and summaries; browser microphone recording.
+ * Nothing here imports Tauri.
  */
 export function createWebVoxaClient(transport: HttpTransport, apiBaseUrl: string): VoxaClient {
   const media = new HttpMediaClient(transport, apiBaseUrl);
   const transcription = new HttpTranscriptionClient(transport);
+  const summaries = new HttpSummaryClient(transport);
   return {
     meetings: new HttpMeetingClient(transport),
     recording: new BrowserRecordingClient(),
     transcription,
-    summaries: new UnavailableSummaryClient(),
+    summaries,
     media,
     serverMedia: media,
     serverTranscripts: transcription,
+    serverSummaries: summaries,
     configuration: new HttpConfigurationClient(transport),
     credentials: new HttpCredentialClient(transport),
     workspaceSettings: new HttpWorkspaceSettingsClient(transport),

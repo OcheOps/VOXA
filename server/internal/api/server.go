@@ -41,6 +41,7 @@ type Server struct {
 	media         *application.MediaService
 	signer        *PlaybackSigner
 	processing    *application.ProcessingService
+	summaries     *application.SummaryService
 }
 
 func NewHandler(meetings *application.MeetingService, configuration *application.ConfigurationService, credentials *application.CredentialService, authenticator Authenticator, resolver WorkspaceResolver, version string, logger *slog.Logger, options ...Option) http.Handler {
@@ -69,6 +70,7 @@ func NewHandler(meetings *application.MeetingService, configuration *application
 	mux.HandleFunc("DELETE /api/v1/credentials/{provider}", s.authorize(s.deleteCredential))
 	s.registerMedia(mux)
 	s.registerProcessing(mux)
+	s.registerSummaries(mux)
 	return s.requestID(securityHeaders(s.accessLog(s.recover(mux))))
 }
 
@@ -76,7 +78,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", APIVersion: "v1", ServerVersion: s.version})
 }
 func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
-	response := capabilitiesResponse{APIVersion: "v1", MediaStorage: availability{Available: s.media != nil}, Transcription: s.transcriptionAvailability(), Summary: providerAvailability{Available: false, Providers: []string{}}}
+	response := capabilitiesResponse{APIVersion: "v1", MediaStorage: availability{Available: s.media != nil}, Transcription: s.transcriptionAvailability(), Summary: s.summaryAvailability()}
 	response.Configuration.ServerManaged = true
 	response.Configuration.CredentialManagement = true
 	writeJSON(w, http.StatusOK, response)

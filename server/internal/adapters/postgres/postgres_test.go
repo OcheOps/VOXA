@@ -189,7 +189,7 @@ func TestMigrationsApplyToEmptyDatabaseAndRerunIsIdempotent(t *testing.T) {
 	if len(applied) != len(before) {
 		t.Fatalf("applied %d migrations, want %d", len(applied), len(before))
 	}
-	for _, table := range []string{"workspaces", "meetings", "workspace_configuration", "workspace_credentials", "users", "workspace_memberships", "deployment_state", "recording_sessions", "media_assets", "processing_jobs", "transcripts", "transcript_segments"} {
+	for _, table := range []string{"workspaces", "meetings", "workspace_configuration", "workspace_credentials", "users", "workspace_memberships", "deployment_state", "recording_sessions", "media_assets", "processing_jobs", "transcripts", "transcript_segments", "summaries"} {
 		if !tableExists(t, pool, table) {
 			t.Fatalf("table %s missing", table)
 		}
@@ -209,7 +209,7 @@ ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(collations, " "); got != "media_assets.id=C media_assets.workspace_id=C meetings.id=C meetings.workspace_id=C processing_jobs.id=C processing_jobs.workspace_id=C recording_sessions.id=C recording_sessions.workspace_id=C transcripts.id=C transcripts.workspace_id=C users.id=C workspace_configuration.workspace_id=C workspace_credentials.workspace_id=C workspace_memberships.workspace_id=C workspaces.id=C" {
+	if got := strings.Join(collations, " "); got != "media_assets.id=C media_assets.workspace_id=C meetings.id=C meetings.workspace_id=C processing_jobs.id=C processing_jobs.workspace_id=C recording_sessions.id=C recording_sessions.workspace_id=C summaries.id=C summaries.workspace_id=C transcripts.id=C transcripts.workspace_id=C users.id=C workspace_configuration.workspace_id=C workspace_credentials.workspace_id=C workspace_memberships.workspace_id=C workspaces.id=C" {
 		t.Fatalf("identifier collations = %s", got)
 	}
 

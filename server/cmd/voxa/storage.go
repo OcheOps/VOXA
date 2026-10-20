@@ -31,8 +31,12 @@ type storage struct {
 	media       repository.MediaRepository
 	jobs        repository.JobRepository
 	transcripts repository.TranscriptRepository
-	ready       func(context.Context) error
-	close       func()
+	summaries   repository.SummaryRepository
+	// secrets decrypts provider credentials for summary jobs only; it is
+	// never handed to HTTP handlers.
+	secrets repository.CredentialSecretReader
+	ready   func(context.Context) error
+	close   func()
 }
 
 // openStorage selects and initializes repositories. ensureWorkspace, when
@@ -46,14 +50,18 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 		if getenv(credentialKeyEnv) != "" {
 			logger.Warn("credential encryption key is configured but unused in memory mode", "credential_backend", "memory-plaintext")
 		}
+		credentials := memory.NewCredentialRepository()
+		jobs := memory.NewJobRepository()
 		return &storage{
 			backend:        "memory",
 			meetings:       memory.NewMeetingRepository(),
 			configurations: memory.NewConfigurationRepository(defaults),
-			credentials:    memory.NewCredentialRepository(),
+			credentials:    credentials,
 			media:          memory.NewMediaRepository(),
-			jobs:           memory.NewJobRepository(),
+			jobs:           jobs,
 			transcripts:    memory.NewTranscriptRepository(),
+			summaries:      memory.NewSummaryRepository(jobs),
+			secrets:        credentials,
 			ready:          func(context.Context) error { return nil },
 			close:          func() {},
 		}, nil
@@ -111,11 +119,14 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 	logger.Info("credential storage ready", "credential_backend", "postgres-encrypted", "cipher", "AES-256-GCM",
 		"active_key_version", keyRing.ActiveVersion(), "loaded_key_versions", loaded)
 
+	credentials := postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing))
 	return &storage{
 		backend:        "postgres",
 		meetings:       postgres.NewMeetingRepository(pool),
 		configurations: postgres.NewConfigurationRepository(pool, defaults),
-		credentials:    postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing)),
+		credentials:    credentials,
+		secrets:        credentials,
+		summaries:      postgres.NewSummaryRepository(pool),
 		identities:     postgres.NewIdentityRepository(pool),
 		media:          postgres.NewMediaRepository(pool),
 		jobs:           postgres.NewJobRepository(pool),

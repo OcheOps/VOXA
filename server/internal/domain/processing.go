@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ProcessingJobID string
 type TranscriptID string
@@ -10,6 +13,7 @@ type ProcessingJobType string
 const (
 	JobRemux         ProcessingJobType = "remux"
 	JobTranscription ProcessingJobType = "transcription"
+	JobSummary       ProcessingJobType = "summary"
 )
 
 type ProcessingJobStatus string
@@ -44,6 +48,12 @@ type ProcessingJob struct {
 	StartedAt      *time.Time
 	CompletedAt    *time.Time
 	UpdatedAt      time.Time
+	// Parameters is an immutable snapshot taken at enqueue (summary jobs:
+	// transcript, provider, model, template). Never sent to clients.
+	Parameters json.RawMessage
+	// Checkpoint holds resumable intermediate results written by the
+	// owning attempt (summary chunk results). Never sent to clients.
+	Checkpoint json.RawMessage
 }
 
 func (j ProcessingJob) Active() bool { return j.Status == JobQueued || j.Status == JobRunning }

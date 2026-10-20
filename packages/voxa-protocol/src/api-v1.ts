@@ -1,6 +1,6 @@
-import type { IsoDateTime, JsonValue, MediaAsset, Meeting, ProcessingJob, RecordingSession, Transcript, WorkspaceRole } from './domain.js';
+import type { IsoDateTime, JsonValue, MediaAsset, Meeting, ProcessingJob, RecordingSession, Summary, Transcript, WorkspaceRole } from './domain.js';
 import type { CredentialStatus, CredentialWriteRequest } from './credentials.js';
-import type { MediaAssetId, MeetingId, ProcessingJobId, UserId, WorkspaceId } from './ids.js';
+import type { MediaAssetId, MeetingId, ProcessingJobId, TranscriptId, UserId, WorkspaceId } from './ids.js';
 
 export const API_V1 = {
   health: '/api/v1/health', capabilities: '/api/v1/capabilities', me: '/api/v1/me',
@@ -20,6 +20,9 @@ export const API_V1 = {
   mediaTranscript: '/api/v1/media/:mediaAssetId/transcript',
   mediaTranscription: '/api/v1/media/:mediaAssetId/transcription',
   jobCancel: '/api/v1/jobs/:jobId/cancel',
+  meetingSummary: '/api/v1/meetings/:meetingId/summary',
+  meetingSummaryCancel: '/api/v1/meetings/:meetingId/summary/cancel',
+  summaryTemplates: '/api/v1/summary-templates',
 } as const;
 
 export interface HealthResponse { status: 'ok'; apiVersion: 'v1'; serverVersion: string; }
@@ -83,6 +86,30 @@ export interface ProcessingError { code: string; message: string; }
 export interface MediaTranscriptResponse { mediaAssetId: MediaAssetId | null; state: ProcessingState; error: ProcessingError | null; transcript: Transcript | null; }
 export interface ProcessingJobListResponse { items: ProcessingJob[]; }
 export interface ProcessingJobResponse { job: ProcessingJob; }
+
+/**
+ * Summary state of a meeting. queued/generating: a job is active (any
+ * previous summary is still returned); failed/cancelled: the latest job did
+ * not finish (any previous summary is kept); unavailable: the server or the
+ * workspace cannot generate summaries (`reason` says why).
+ */
+export type SummaryState = 'none' | 'queued' | 'generating' | 'ready' | 'failed' | 'cancelled' | 'unavailable';
+export type SummaryStateReason = 'disabled' | 'not_configured' | 'provider_not_enabled' | 'model_missing' | 'credential_missing' | 'no_transcript';
+export interface MeetingSummaryResponse {
+  meetingId: MeetingId;
+  state: SummaryState;
+  reason: SummaryStateReason | null;
+  /** True when the summary was produced from a transcript that has since been replaced. */
+  stale: boolean;
+  currentTranscriptId: TranscriptId | null;
+  error: ProcessingError | null;
+  job: ProcessingJob | null;
+  summary: Summary | null;
+}
+/** Optional overrides; provider, model and endpoint always come from server configuration. */
+export interface GenerateSummaryRequest { templateId?: string; customPrompt?: string; }
+export interface SummaryTemplateInfo { id: string; name: string; description: string; }
+export interface SummaryTemplateListResponse { items: SummaryTemplateInfo[]; }
 
 export interface CursorPage { nextCursor: string | null; hasMore: boolean; }
 export interface MeetingListQuery { cursor?: string; limit?: number; }
@@ -160,4 +187,8 @@ export interface ApiV1Contract {
   getMediaTranscript: Endpoint<'GET', typeof API_V1.mediaTranscript, { mediaAssetId: MediaAssetId }, MediaTranscriptResponse>;
   requestTranscription: Endpoint<'POST', typeof API_V1.mediaTranscription, { mediaAssetId: MediaAssetId }, ProcessingJobResponse>;
   cancelJob: Endpoint<'POST', typeof API_V1.jobCancel, { jobId: ProcessingJobId }, ProcessingJobResponse>;
+  getMeetingSummary: Endpoint<'GET', typeof API_V1.meetingSummary, { meetingId: MeetingId }, MeetingSummaryResponse>;
+  generateSummary: Endpoint<'POST', typeof API_V1.meetingSummary, { meetingId: MeetingId; body?: GenerateSummaryRequest }, ProcessingJobResponse>;
+  cancelSummary: Endpoint<'POST', typeof API_V1.meetingSummaryCancel, { meetingId: MeetingId }, ProcessingJobResponse>;
+  listSummaryTemplates: Endpoint<'GET', typeof API_V1.summaryTemplates, Record<string, never>, SummaryTemplateListResponse>;
 }

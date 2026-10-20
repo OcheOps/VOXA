@@ -140,7 +140,12 @@ func postgresProcessingFixture(t *testing.T) repositorytest.ProcessingFixture {
 			t.Fatal(err)
 		}
 	}
-	return repositorytest.ProcessingFixture{Jobs: postgres.NewJobRepository(pool), Transcripts: postgres.NewTranscriptRepository(pool), AssetA1: "med_a1", AssetA2: "med_a2", AssetB: "med_b"}
+	return repositorytest.ProcessingFixture{Jobs: postgres.NewJobRepository(pool), Transcripts: postgres.NewTranscriptRepository(pool),
+		Summaries: postgres.NewSummaryRepository(pool), AssetA1: "med_a1", AssetA2: "med_a2", AssetB: "med_b"}
+}
+
+func TestSummaryRepositoryContract(t *testing.T) {
+	repositorytest.SummaryRepositoryContract(t, postgresProcessingFixture)
 }
 
 func TestJobRepositoryContract(t *testing.T) {
@@ -182,7 +187,7 @@ VALUES ('med_old', $1, $2, 'rec_old', 'audio', 'audio/webm', 'ready', 10, 1, 'ob
 		t.Fatal(err)
 	}
 	applied, err := postgres.Migrate(ctx, pool, migrations.Files)
-	if err != nil || len(applied) != 1 || applied[0].Version != 5 {
+	if err != nil || len(applied) != 2 || applied[0].Version != 5 || applied[1].Version != 6 {
 		t.Fatalf("applied=%#v err=%v", applied, err)
 	}
 	// Pre-existing recordings are picked up by reconciliation.

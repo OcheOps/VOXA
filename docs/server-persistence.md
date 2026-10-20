@@ -166,6 +166,20 @@ See `docs/voxa-web-recording.md`.
 
 See `docs/server-processing.md`.
 
+`0006_summaries.sql` adds summaries as a job type:
+- `processing_jobs.type` accepts `summary`; `parameters` (immutable enqueue
+  snapshot) and `checkpoint` (resumable chunk results) are JSONB objects,
+  never returned by the API;
+- a partial unique index allows one active summary job per meeting;
+- `summaries` holds one current summary per meeting: JSONB `content`,
+  provenance (`transcript_id` without a foreign key so it survives
+  retranscription, `media_asset_id`, `processing_job_id`, provider, model,
+  template, output language) and internal `usage`. It is written only by
+  `Promote`, which locks the job row and requires the claiming attempt in the
+  same transaction.
+
+See `docs/server-summaries.md`.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to

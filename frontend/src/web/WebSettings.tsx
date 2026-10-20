@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { describeError } from './errors';
 
-const PROVIDER_SUGGESTIONS = ['openai', 'claude', 'groq', 'openrouter', 'deepgram', 'elevenLabs'];
+const PROVIDER_SUGGESTIONS = ['openai', 'claude', 'groq', 'openrouter', 'ollama', 'custom-openai', 'deepgram', 'elevenLabs'];
 
 /** Builds a patch containing only the fields that changed. */
 export function settingsPatch(before: WorkspaceSettings, after: WorkspaceSettings): WorkspaceSettingsPatch {

@@ -20,6 +20,9 @@ import {
   type MeResponse,
   type CreateRecordingResponse,
   type MediaTranscriptResponse,
+  type MeetingSummaryResponse,
+  type GenerateSummaryRequest,
+  type SummaryMarkdownContent,
   WORKSPACE_SELECTION_REQUIRED,
   type Summary,
   type TranscriptSegment,
@@ -152,6 +155,9 @@ describe('API v1 surface', () => {
       mediaTranscript: '/api/v1/media/:mediaAssetId/transcript',
       mediaTranscription: '/api/v1/media/:mediaAssetId/transcription',
       jobCancel: '/api/v1/jobs/:jobId/cancel',
+      meetingSummary: '/api/v1/meetings/:meetingId/summary',
+      meetingSummaryCancel: '/api/v1/meetings/:meetingId/summary/cancel',
+      summaryTemplates: '/api/v1/summary-templates',
     });
   });
 
@@ -220,6 +226,25 @@ describe('processing protocol', () => {
     expect(JSON.parse(JSON.stringify(response))).toEqual(response);
     const pending: MediaTranscriptResponse = { mediaAssetId: mediaAssetId('med_1'), state: 'transcribing', error: null, transcript: null };
     expect(pending.transcript).toBeNull();
+  });
+
+  test('summary state carries provenance, staleness and structured content without provider secrets', () => {
+    const content: SummaryMarkdownContent = { format: 'markdown', markdown: '**Summary**\n\nShip it.', title: 'Launch', chunkCount: 1, reasoningStripped: false, normalizationFallback: false };
+    const response: MeetingSummaryResponse = {
+      meetingId: meetingId('mtg_1'), state: 'generating', reason: null, stale: true, currentTranscriptId: transcriptId('trn_2'), error: null,
+      job: { id: processingJobId('job_2'), workspaceId: workspaceId('wsp_1'), meetingId: meetingId('mtg_1'), mediaAssetId: mediaAssetId('med_1'), kind: 'summary', status: 'running', progress: 0.5, errorCode: null, errorMessage: null, createdAt: '2026-10-20T10:00:00Z', startedAt: '2026-10-20T10:00:01Z', completedAt: null },
+      summary: {
+        id: summaryId('sum_1'), workspaceId: workspaceId('wsp_1'), meetingId: meetingId('mtg_1'), processingJobId: processingJobId('job_1'),
+        transcriptId: transcriptId('trn_1'), mediaAssetId: mediaAssetId('med_1'), provider: 'openai', model: 'gpt-4o-mini', templateId: 'standard_meeting',
+        outputLanguage: null, content: { ...content }, createdAt: '2026-10-20T10:00:00Z', updatedAt: '2026-10-20T10:00:00Z',
+      },
+    };
+    expect(JSON.parse(JSON.stringify(response))).toEqual(response);
+    const request: GenerateSummaryRequest = { templateId: 'daily_standup' };
+    // @ts-expect-error Clients cannot choose provider endpoints or keys.
+    const unsafe: GenerateSummaryRequest = { endpoint: 'http://attacker' };
+    void unsafe;
+    expect(Object.keys(request)).toEqual(['templateId']);
   });
 });
 

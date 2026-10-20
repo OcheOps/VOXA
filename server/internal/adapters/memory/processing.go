@@ -29,10 +29,18 @@ func (r *JobRepository) Enqueue(_ context.Context, job domain.ProcessingJob) err
 		return repository.ErrConflict
 	}
 	for _, existing := range r.jobs {
-		if existing.Active() && existing.Type == job.Type && existing.MediaAssetID != nil && job.MediaAssetID != nil && *existing.MediaAssetID == *job.MediaAssetID {
+		if !existing.Active() || existing.Type != job.Type {
+			continue
+		}
+		if job.Type == domain.JobSummary && existing.WorkspaceID == job.WorkspaceID && existing.MeetingID == job.MeetingID {
+			return repository.ErrConflict
+		}
+		if existing.MediaAssetID != nil && job.MediaAssetID != nil && *existing.MediaAssetID == *job.MediaAssetID {
 			return repository.ErrConflict
 		}
 	}
+	job.Parameters = append([]byte(nil), job.Parameters...)
+	job.Checkpoint = nil
 	r.jobs[job.ID] = job
 	return nil
 }
@@ -196,6 +204,18 @@ func (r *JobRepository) ListAssetJobs(_ context.Context, workspaceID domain.Work
 	}), nil
 }
 
+func (r *JobRepository) SaveCheckpoint(_ context.Context, id domain.ProcessingJobID, attempt int, checkpoint []byte, now time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.owned(id, attempt)
+	if !ok {
+		return false, nil
+	}
+	job.Checkpoint, job.UpdatedAt = append([]byte(nil), checkpoint...), now
+	r.jobs[id] = job
+	return true, nil
+}
+
 func (r *JobRepository) FailExhausted(_ context.Context, now time.Time) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -240,5 +260,52 @@ func (r *TranscriptRepository) GetByAsset(_ context.Context, workspaceID domain.
 	return transcript, nil
 }
 
+// SummaryRepository keeps one summary per meeting. Promote checks job
+// ownership under the job repository's lock, matching the PostgreSQL
+// transaction.
+type SummaryRepository struct {
+	jobs      *JobRepository
+	mu        sync.Mutex
+	summaries map[string]domain.Summary
+}
+
+func NewSummaryRepository(jobs *JobRepository) *SummaryRepository {
+	return &SummaryRepository{jobs: jobs, summaries: map[string]domain.Summary{}}
+}
+
+func summaryKey(workspaceID domain.WorkspaceID, meetingID domain.MeetingID) string {
+	return string(workspaceID) + "\x00" + string(meetingID)
+}
+
+func (r *SummaryRepository) Promote(_ context.Context, summary domain.Summary, jobID domain.ProcessingJobID, attempt int) error {
+	r.jobs.mu.Lock()
+	defer r.jobs.mu.Unlock()
+	job, ok := r.jobs.owned(jobID, attempt)
+	if !ok || job.WorkspaceID != summary.WorkspaceID || job.MeetingID != summary.MeetingID {
+		return repository.ErrConflict
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := summaryKey(summary.WorkspaceID, summary.MeetingID)
+	if previous, exists := r.summaries[key]; exists {
+		summary.CreatedAt = previous.CreatedAt
+	}
+	summary.Content = append([]byte(nil), summary.Content...)
+	r.summaries[key] = summary
+	return nil
+}
+
+func (r *SummaryRepository) GetByMeeting(_ context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) (domain.Summary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	summary, ok := r.summaries[summaryKey(workspaceID, meetingID)]
+	if !ok {
+		return domain.Summary{}, repository.ErrNotFound
+	}
+	summary.Content = append([]byte(nil), summary.Content...)
+	return summary, nil
+}
+
 var _ repository.JobRepository = (*JobRepository)(nil)
+var _ repository.SummaryRepository = (*SummaryRepository)(nil)
 var _ repository.TranscriptRepository = (*TranscriptRepository)(nil)

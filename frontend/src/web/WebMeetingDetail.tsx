@@ -14,6 +14,7 @@ import type { MeetingMetadata } from '@/types';
 import { CapabilityNotice } from './CapabilityNotice';
 import { MeetingMedia } from './recording/MeetingMedia';
 import { RecordingPanel } from './recording/RecordingPanel';
+import { SummaryPanel } from './SummaryPanel';
 import { describeError } from './errors';
 
 function formatDate(value: string): string {
@@ -116,6 +117,10 @@ function MeetingDetail() {
         <h2 className="text-sm font-semibold text-gray-700">Recordings and transcripts</h2>
         <RecordingPanel meetingId={meeting.id} />
         <MeetingMedia meetingId={meeting.id} />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700">Summary</h2>
+        <SummaryPanel meetingId={meeting.id} />
       </section>
       <CapabilityNotice />
 

@@ -40,6 +40,9 @@ type Worker struct {
 	config    WorkerConfig
 	reconcile func(context.Context)
 	now       func() time.Time
+	// OnCompleted runs after a job was marked completed (e.g. to schedule a
+	// summary once a transcript is final). Errors are logged only.
+	OnCompleted func(context.Context, domain.ProcessingJob) error
 }
 
 var errLeaseLost = errors.New("job no longer owned by this worker")
@@ -174,6 +177,11 @@ func (w *Worker) process(parent context.Context, job domain.ProcessingJob) {
 			return
 		}
 		logger.Info("processing job completed", "duration", elapsed)
+		if w.OnCompleted != nil {
+			if hookErr := w.OnCompleted(writeCtx, job); hookErr != nil {
+				logger.Warn("follow-up after completed job failed", "error_category", "follow_up")
+			}
+		}
 	case parent.Err() != nil:
 		// Server shutting down: hand the job back without spending an attempt.
 		_ = w.jobs.Release(writeCtx, job.ID, job.Attempts, now)
@@ -181,11 +189,12 @@ func (w *Worker) process(parent context.Context, job domain.ProcessingJob) {
 	default:
 		var jobErr *JobError
 		if !errors.As(err, &jobErr) {
-			jobErr = transient("processing_failed", msgTranscription, err)
+			jobErr = transient("processing_failed", "Processing failed.", err)
 		}
 		var retryAt *time.Time
 		if jobErr.Retryable && job.Attempts < job.MaxAttempts {
-			at := now.Add(policies[job.Type].delay(job.Attempts))
+			// Honour a provider's Retry-After when it asks for longer.
+			at := now.Add(max(policies[job.Type].delay(job.Attempts), jobErr.RetryAfter))
 			retryAt = &at
 		}
 		internal := ""

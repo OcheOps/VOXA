@@ -35,7 +35,22 @@ export interface TranscriptSegment {
  * that recording. `asrEngine`/`asrModel` record which recognizer produced it.
  */
 export interface Transcript { id: TranscriptId; workspaceId: WorkspaceId; meetingId: MeetingId; mediaAssetId: MediaAssetId | null; processingJobId: ProcessingJobId | null; language: string | null; asrEngine: string | null; asrModel: string | null; segments: TranscriptSegment[]; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
-export interface Summary { id: SummaryId; workspaceId: WorkspaceId; meetingId: MeetingId; processingJobId: ProcessingJobId | null; content: JsonValue; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
+/**
+ * A meeting summary. Server-generated summaries carry provenance: the
+ * transcript, provider, model and template that produced them. `content` is
+ * structured JSON; server summaries use `SummaryMarkdownContent`.
+ */
+export interface Summary {
+  id: SummaryId; workspaceId: WorkspaceId; meetingId: MeetingId; processingJobId: ProcessingJobId | null; content: JsonValue;
+  transcriptId?: TranscriptId | null; mediaAssetId?: MediaAssetId | null; provider?: string | null; model?: string | null;
+  templateId?: string | null; outputLanguage?: string | null;
+  createdAt: IsoDateTime; updatedAt: IsoDateTime;
+}
+/** Content of a server-generated summary (same Markdown as the desktop result). */
+export interface SummaryMarkdownContent {
+  format: 'markdown'; markdown: string; title?: string; englishMarkdown?: string;
+  chunkCount: number; reasoningStripped: boolean; normalizationFallback: boolean;
+}
 /** `remux` rewrites a recording's container (stream copy) for reliable duration and seeking. */
 export type ProcessingJobKind = 'remux' | 'transcription' | 'summary' | 'import' | 'transcode' | 'diarization';
 export type ProcessingJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';

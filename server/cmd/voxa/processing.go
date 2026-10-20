@@ -17,13 +17,37 @@ import (
 	"github.com/OcheOps/voxa/server/internal/domain"
 	"github.com/OcheOps/voxa/server/internal/mediastore"
 	"github.com/OcheOps/voxa/server/internal/processing"
+	"github.com/OcheOps/voxa/server/internal/summary"
 )
 
 const (
 	whisperModelEnv      = "VOXA_WHISPER_MODEL"
 	whisperBinEnv        = "VOXA_WHISPER_BIN"
 	processingWorkersEnv = "VOXA_PROCESSING_WORKERS"
+	summaryProvidersEnv  = "VOXA_SUMMARY_PROVIDERS"
+	ollamaURLEnv         = "VOXA_OLLAMA_URL"
+	customOpenAIURLEnv   = "VOXA_CUSTOM_OPENAI_URL"
 )
+
+// loadSummaryProviders reads the operator's provider allow-list. Nothing is
+// enabled by default: transcripts leave the server only when an operator
+// opts in to a provider.
+func loadSummaryProviders(logger *slog.Logger, getenv func(string) string) ([]summary.Spec, error) {
+	var enabled []string
+	for _, name := range strings.Split(getenv(summaryProvidersEnv), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			enabled = append(enabled, name)
+		}
+	}
+	specs, warnings, err := summary.Specs(summary.Settings{Enabled: enabled, OllamaURL: getenv(ollamaURLEnv), CustomOpenAIURL: getenv(customOpenAIURLEnv)})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", summaryProvidersEnv, err)
+	}
+	for _, warning := range warnings {
+		logger.Warn("summary provider endpoint warning", "warning", warning)
+	}
+	return specs, nil
+}
 
 func loadWorkerCount(getenv func(string) string) (int, error) {
 	value := strings.TrimSpace(getenv(processingWorkersEnv))
@@ -40,16 +64,20 @@ func loadWorkerCount(getenv func(string) string) (int, error) {
 // openProcessing starts remux (and, when a usable Whisper engine is
 // configured, transcription) workers. Missing tools disable the feature with
 // an operator log; recordings keep saving and playing either way.
-func openProcessing(ctx context.Context, logger *slog.Logger, getenv func(string) string, store *storage, files mediastore.Store, media *application.MediaService) (api.Option, func(), error) {
+func openProcessing(ctx context.Context, logger *slog.Logger, getenv func(string) string, store *storage, files mediastore.Store, media *application.MediaService) ([]api.Option, func(), error) {
 	noWait := func() {}
 	workers, err := loadWorkerCount(getenv)
+	if err != nil {
+		return nil, noWait, err
+	}
+	specs, err := loadSummaryProviders(logger, getenv)
 	if err != nil {
 		return nil, noWait, err
 	}
 	ffmpeg, ffmpegErr := exec.LookPath("ffmpeg")
 	ffprobe, ffprobeErr := exec.LookPath("ffprobe")
 	if ffmpegErr != nil || ffprobeErr != nil {
-		logger.Warn("media processing disabled: ffmpeg and ffprobe must be on PATH; recordings still save and play, without duration fix-ups or transcription")
+		logger.Warn("media processing disabled: ffmpeg and ffprobe must be on PATH; recordings still save and play, without duration fix-ups, transcription or summaries")
 		return nil, noWait, nil
 	}
 	tools := processing.Tools{FFmpeg: ffmpeg, FFprobe: ffprobe}
@@ -89,6 +117,19 @@ func openProcessing(ctx context.Context, logger *slog.Logger, getenv func(string
 		handlers[domain.JobTranscription] = &processing.TranscriptionHandler{Media: store.media, Transcripts: store.transcripts,
 			Configurations: store.configurations, Store: files, Tools: tools, Engine: engine, Now: now}
 	}
+	var providers application.SummaryProviders
+	var registry *summary.Registry
+	if len(specs) > 0 {
+		registry = summary.NewRegistry(specs, summary.NewHTTPClient(), store.secrets)
+		providers = registry
+		handlers[domain.JobSummary] = &processing.SummaryHandler{Jobs: store.jobs, Transcripts: store.transcripts, Summaries: store.summaries,
+			Providers: registry, Now: now}
+		logger.Info("summaries enabled", "providers", strings.Join(registry.Enabled(), ","))
+	} else {
+		logger.Info("summaries disabled (VOXA_SUMMARY_PROVIDERS not set)")
+	}
+	summaries := application.NewSummaryService(store.meetings, store.media, store.jobs, store.transcripts, store.summaries,
+		store.configurations, store.credentials, providers)
 	reconcile := func(ctx context.Context) {
 		assets, err := store.media.ListUnprocessedReady(ctx, 100)
 		if err != nil {
@@ -101,6 +142,10 @@ func openProcessing(ctx context.Context, logger *slog.Logger, getenv func(string
 	config := processing.DefaultWorkerConfig(logger)
 	config.Concurrency = workers
 	worker := processing.NewWorker(store.jobs, handlers, config, reconcile)
+	worker.OnCompleted = func(ctx context.Context, job domain.ProcessingJob) error {
+		_, err := summaries.AfterTranscription(ctx, job)
+		return err
+	}
 	var running sync.WaitGroup
 	running.Add(1)
 	go func() {
@@ -109,5 +154,5 @@ func openProcessing(ctx context.Context, logger *slog.Logger, getenv func(string
 	}()
 	logger.Info("media processing enabled", "workers", workers, "remux", true, "transcription", engine != nil, "queue", store.backend)
 	service := application.NewProcessingService(store.meetings, store.media, store.jobs, store.transcripts, queue, engine != nil)
-	return api.WithProcessing(service), running.Wait, nil
+	return []api.Option{api.WithProcessing(service), api.WithSummaries(summaries)}, running.Wait, nil
 }

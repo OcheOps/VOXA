@@ -3,7 +3,8 @@
 Status: first asynchronous pipeline. A finalized browser recording is
 remuxed (container repair, no re-encoding) and then transcribed with
 self-hosted whisper.cpp. Transcripts are stored in PostgreSQL and shown in
-Voxa Web with click-to-seek. Summaries, diarization and speaker
+Voxa Web with click-to-seek. Summaries run as a third job type in the same
+queue and worker (see `docs/server-summaries.md`). Diarization and speaker
 identification are **not** implemented.
 
 The desktop (Tauri) app is unchanged: it still transcribes locally with
@@ -249,12 +250,14 @@ speaker labels onto segments (`source` is reserved in the protocol) without
 changing the queue. Speaker identification needs consent and enrolment
 design first.
 
-## 16. Future: summaries
+## 16. Summaries
 
-Not implemented. A `summary` job would be enqueued after a transcript is
-written, read segments, call the workspace's configured LLM provider with
-server-side decrypted credentials, and store a summary row; capabilities
-would then advertise `summary.available`.
+Implemented as the `summary` job type: queued after a completed
+transcription (worker `OnCompleted` hook, when auto-generation is enabled)
+or on request, with an immutable parameter snapshot, chunk checkpoints,
+`Retry-After`-aware retries and fenced result promotion. One active summary
+job per meeting (`processing_jobs_one_active_summary_idx`). See
+`docs/server-summaries.md`.
 
 ## Quality and limitations
 

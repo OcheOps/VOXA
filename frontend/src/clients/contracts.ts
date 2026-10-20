@@ -584,6 +584,42 @@ export interface ServerTranscriptClient {
   cancelProcessing(meetingId: string, mediaAssetId: string): Promise<boolean>;
 }
 
+export type MeetingSummaryState = 'none' | 'queued' | 'generating' | 'ready' | 'failed' | 'cancelled' | 'unavailable';
+
+/** A server-generated meeting summary and its processing state (web). */
+export interface MeetingSummaryView {
+  meetingId: string;
+  state: MeetingSummaryState;
+  /** Why summaries cannot run (unavailable) or are not possible yet (none). */
+  reason: string | null;
+  /** The summary describes a transcript that has since been replaced. */
+  stale: boolean;
+  error: { code: string; message: string } | null;
+  jobId: string | null;
+  progress: number | null;
+  /** Kept while a regeneration runs and after a failed one. */
+  summary: {
+    id: string;
+    markdown: string;
+    title: string | null;
+    provider: string | null;
+    model: string | null;
+    templateId: string | null;
+    outputLanguage: string | null;
+    transcriptId: string | null;
+    updatedAt: string;
+  } | null;
+}
+
+/** Server-side summaries (web). Provider, model and credentials are server configuration. */
+export interface ServerSummaryClient {
+  getMeetingSummary(meetingId: string, signal?: AbortSignal): Promise<MeetingSummaryView>;
+  generateSummary(meetingId: string, options?: { templateId?: string; customPrompt?: string }): Promise<void>;
+  /** Cancels the meeting's active summary job; false when none was running. */
+  cancelSummary(meetingId: string): Promise<boolean>;
+  listSummaryTemplates(): Promise<SummaryTemplate[]>;
+}
+
 /** Provider credential metadata. Secrets are write-only and never read back. */
 export interface CredentialStatus {
   provider: string;
@@ -634,4 +670,5 @@ export interface VoxaClient {
   serverMedia?: ServerMediaClient;
   /** Present only where recordings are transcribed on a server (web). */
   serverTranscripts?: ServerTranscriptClient;
+  serverSummaries?: ServerSummaryClient;
 }

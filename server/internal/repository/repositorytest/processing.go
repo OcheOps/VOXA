@@ -2,8 +2,10 @@ package repositorytest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 type ProcessingFixture struct {
 	Jobs        repository.JobRepository
 	Transcripts repository.TranscriptRepository
+	Summaries   repository.SummaryRepository
 	// AssetA* belong to WorkspaceA/MeetingA; AssetB to WorkspaceB/MeetingB.
 	AssetA1, AssetA2, AssetB domain.MediaAssetID
 }
@@ -26,7 +29,7 @@ func job(id string, workspace domain.WorkspaceID, meeting domain.MeetingID, asse
 		Status: domain.JobQueued, MaxAttempts: 3, RunAfter: at, CreatedAt: at, UpdatedAt: at}
 }
 
-var allTypes = []domain.ProcessingJobType{domain.JobRemux, domain.JobTranscription}
+var allTypes = []domain.ProcessingJobType{domain.JobRemux, domain.JobTranscription, domain.JobSummary}
 
 // JobRepositoryContract runs the shared queue semantics.
 func JobRepositoryContract(t *testing.T, newFixture func(t *testing.T) ProcessingFixture) {
@@ -241,6 +244,47 @@ func JobRepositoryContract(t *testing.T, newFixture func(t *testing.T) Processin
 		}
 	})
 
+	t.Run("one active summary job per meeting; parameters and checkpoints round-trip with fencing", func(t *testing.T) {
+		f := newFixture(t)
+		first := job("job_s1", WorkspaceA, MeetingA, f.AssetA1, domain.JobSummary, baseTime)
+		first.Parameters = []byte(`{"provider":"openai","transcriptId":"trn_1"}`)
+		if err := f.Jobs.Enqueue(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		// Another recording of the same meeting still conflicts: summaries are per meeting.
+		if err := f.Jobs.Enqueue(ctx, job("job_s2", WorkspaceA, MeetingA, f.AssetA2, domain.JobSummary, baseTime)); !errors.Is(err, repository.ErrConflict) {
+			t.Fatalf("second active summary err = %v", err)
+		}
+		if err := f.Jobs.Enqueue(ctx, job("job_s3", WorkspaceB, MeetingB, f.AssetB, domain.JobSummary, baseTime.Add(time.Hour))); err != nil {
+			t.Fatalf("other meeting: %v", err)
+		}
+		claimed, err := f.Jobs.Claim(ctx, []domain.ProcessingJobType{domain.JobSummary}, 1, lease, baseTime)
+		if err != nil || len(claimed) != 1 || claimed[0].ID != "job_s1" || !jsonEqual(claimed[0].Parameters, first.Parameters) || claimed[0].Checkpoint != nil {
+			t.Fatalf("claimed=%#v err=%v", claimed, err)
+		}
+		if ok, err := f.Jobs.SaveCheckpoint(ctx, "job_s1", 1, []byte(`{"chunks":["a"]}`), baseTime); err != nil || !ok {
+			t.Fatalf("checkpoint ok=%v err=%v", ok, err)
+		}
+		if ok, _ := f.Jobs.SaveCheckpoint(ctx, "job_s1", 2, []byte(`{"chunks":["stale"]}`), baseTime); ok {
+			t.Fatal("stale attempt saved a checkpoint")
+		}
+		// The checkpoint survives a retry so the next attempt can resume.
+		retry := baseTime.Add(time.Second)
+		if err := f.Jobs.Fail(ctx, "job_s1", 1, "provider_unavailable", "The summary provider is unavailable.", "", &retry, baseTime); err != nil {
+			t.Fatal(err)
+		}
+		again, _ := f.Jobs.Claim(ctx, []domain.ProcessingJobType{domain.JobSummary}, 1, lease, retry)
+		if len(again) != 1 || !jsonEqual(again[0].Checkpoint, []byte(`{"chunks":["a"]}`)) {
+			t.Fatalf("reclaimed = %#v", again)
+		}
+		if _, err := f.Jobs.Cancel(ctx, WorkspaceA, "job_s1", retry); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Jobs.Enqueue(ctx, job("job_s4", WorkspaceA, MeetingA, f.AssetA2, domain.JobSummary, retry)); err != nil {
+			t.Fatalf("after cancel: %v", err)
+		}
+	})
+
 	t.Run("listing and reads are workspace scoped", func(t *testing.T) {
 		f := newFixture(t)
 		_ = f.Jobs.Enqueue(ctx, job("job_a", WorkspaceA, MeetingA, f.AssetA1, domain.JobRemux, baseTime))
@@ -303,6 +347,110 @@ func TranscriptRepositoryContract(t *testing.T, newFixture func(t *testing.T) Pr
 		}
 		if got, err := f.Transcripts.GetByAsset(ctx, WorkspaceA, f.AssetA2); err != nil || len(got.Segments) != 0 {
 			t.Fatalf("got=%#v err=%v", got, err)
+		}
+	})
+}
+
+func jsonEqual(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+func summaryFor(id string, workspace domain.WorkspaceID, meeting domain.MeetingID, transcript string, at time.Time) domain.Summary {
+	language := "fr"
+	input, output := 120, 40
+	return domain.Summary{ID: domain.SummaryID(id), WorkspaceID: workspace, MeetingID: meeting, TranscriptID: domain.TranscriptID(transcript),
+		Provider: "openai", Model: "gpt-test", TemplateID: "standard_meeting", OutputLanguage: &language,
+		Content: []byte(`{"format":"markdown","markdown":"**Summary**\n\nShipped. \u00e9t\u00e9","title":"Weekly","chunkCount":2,"reasoningStripped":false}`),
+		Usage:   &domain.SummaryUsage{InputTokens: &input, OutputTokens: &output, Requests: 3, DurationMs: 1500}, CreatedAt: at, UpdatedAt: at}
+}
+
+// SummaryRepositoryContract runs the shared summary semantics.
+func SummaryRepositoryContract(t *testing.T, newFixture func(t *testing.T) ProcessingFixture) {
+	ctx := context.Background()
+	claim := func(t *testing.T, f ProcessingFixture, id string, workspace domain.WorkspaceID, meeting domain.MeetingID, asset domain.MediaAssetID, at time.Time) int {
+		t.Helper()
+		if err := f.Jobs.Enqueue(ctx, job(id, workspace, meeting, asset, domain.JobSummary, at)); err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := f.Jobs.Claim(ctx, []domain.ProcessingJobType{domain.JobSummary}, 1, time.Minute, at)
+		if err != nil || len(claimed) != 1 || string(claimed[0].ID) != id {
+			t.Fatalf("claim %s: %#v %v", id, claimed, err)
+		}
+		return claimed[0].Attempts
+	}
+
+	t.Run("promote stores structured content with provenance; reads are workspace scoped", func(t *testing.T) {
+		f := newFixture(t)
+		attempt := claim(t, f, "job_1", WorkspaceA, MeetingA, f.AssetA1, baseTime)
+		summary := summaryFor("sum_1", WorkspaceA, MeetingA, "trn_1", baseTime)
+		jobID, asset := domain.ProcessingJobID("job_1"), f.AssetA1
+		summary.ProcessingJobID, summary.MediaAssetID = &jobID, &asset
+		if err := f.Summaries.Promote(ctx, summary, "job_1", attempt); err != nil {
+			t.Fatal(err)
+		}
+		got, err := f.Summaries.GetByMeeting(ctx, WorkspaceA, MeetingA)
+		if err != nil || got.ID != "sum_1" || got.TranscriptID != "trn_1" || got.Provider != "openai" || got.Model != "gpt-test" || got.TemplateID != "standard_meeting" ||
+			got.OutputLanguage == nil || *got.OutputLanguage != "fr" || got.ProcessingJobID == nil || *got.ProcessingJobID != "job_1" ||
+			got.MediaAssetID == nil || *got.MediaAssetID != f.AssetA1 || !jsonEqual(got.Content, summary.Content) || !got.CreatedAt.Equal(baseTime) {
+			t.Fatalf("summary = %#v err=%v", got, err)
+		}
+		if got.Usage == nil || *got.Usage.InputTokens != 120 || *got.Usage.OutputTokens != 40 || got.Usage.Requests != 3 {
+			t.Fatalf("usage = %#v", got.Usage)
+		}
+		if _, err := f.Summaries.GetByMeeting(ctx, WorkspaceB, MeetingA); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("cross-workspace read err = %v", err)
+		}
+		if _, err := f.Summaries.GetByMeeting(ctx, WorkspaceB, MeetingB); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("missing summary err = %v", err)
+		}
+	})
+
+	t.Run("only the owning attempt can promote; replacement keeps created_at", func(t *testing.T) {
+		f := newFixture(t)
+		attempt := claim(t, f, "job_1", WorkspaceA, MeetingA, f.AssetA1, baseTime)
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_1", WorkspaceA, MeetingA, "trn_1", baseTime), "job_1", attempt); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Jobs.Complete(ctx, "job_1", attempt, baseTime); err != nil {
+			t.Fatal(err)
+		}
+		// A finished job can no longer write.
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_x", WorkspaceA, MeetingA, "trn_x", baseTime), "job_1", attempt); !errors.Is(err, repository.ErrConflict) {
+			t.Fatalf("promote after completion err = %v", err)
+		}
+		later := baseTime.Add(time.Hour)
+		second := claim(t, f, "job_2", WorkspaceA, MeetingA, f.AssetA1, later)
+		// A stale attempt number, or a job of another meeting, cannot write.
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_y", WorkspaceA, MeetingA, "trn_y", later), "job_2", second+1); !errors.Is(err, repository.ErrConflict) {
+			t.Fatalf("stale attempt err = %v", err)
+		}
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_z", WorkspaceB, MeetingB, "trn_z", later), "job_2", second); !errors.Is(err, repository.ErrConflict) {
+			t.Fatalf("foreign meeting err = %v", err)
+		}
+		if got, _ := f.Summaries.GetByMeeting(ctx, WorkspaceA, MeetingA); got.ID != "sum_1" {
+			t.Fatalf("previous summary replaced by a rejected promote: %#v", got)
+		}
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_2", WorkspaceA, MeetingA, "trn_2", later), "job_2", second); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := f.Summaries.GetByMeeting(ctx, WorkspaceA, MeetingA)
+		if got.ID != "sum_2" || got.TranscriptID != "trn_2" || !got.CreatedAt.Equal(baseTime) || !got.UpdatedAt.Equal(later) {
+			t.Fatalf("replaced summary = %#v", got)
+		}
+	})
+
+	t.Run("a cancelled job cannot promote", func(t *testing.T) {
+		f := newFixture(t)
+		attempt := claim(t, f, "job_1", WorkspaceA, MeetingA, f.AssetA1, baseTime)
+		if _, err := f.Jobs.Cancel(ctx, WorkspaceA, "job_1", baseTime); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Summaries.Promote(ctx, summaryFor("sum_1", WorkspaceA, MeetingA, "trn_1", baseTime), "job_1", attempt); !errors.Is(err, repository.ErrConflict) {
+			t.Fatalf("cancelled promote err = %v", err)
 		}
 	})
 }

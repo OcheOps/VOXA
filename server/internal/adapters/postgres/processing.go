@@ -23,7 +23,7 @@ func NewJobRepository(pool *pgxpool.Pool) *JobRepository {
 }
 
 const jobColumns = `id, workspace_id, meeting_id, media_asset_id, type, status, attempts, max_attempts, run_after, lease_expires_at, progress,
-error_code, error_message, internal_error, created_at, started_at, completed_at, updated_at`
+error_code, error_message, internal_error, created_at, started_at, completed_at, updated_at, parameters, checkpoint`
 
 func scanJob(row pgx.Row) (domain.ProcessingJob, error) {
 	var job domain.ProcessingJob
@@ -31,7 +31,7 @@ func scanJob(row pgx.Row) (domain.ProcessingJob, error) {
 	var assetID *string
 	if err := row.Scan(&id, &workspaceID, &meetingID, &assetID, &jobType, &status, &job.Attempts, &job.MaxAttempts, &job.RunAfter,
 		&job.LeaseExpiresAt, &job.Progress, &job.ErrorCode, &job.ErrorMessage, &job.InternalError, &job.CreatedAt, &job.StartedAt,
-		&job.CompletedAt, &job.UpdatedAt); err != nil {
+		&job.CompletedAt, &job.UpdatedAt, &job.Parameters, &job.Checkpoint); err != nil {
 		return domain.ProcessingJob{}, err
 	}
 	job.ID, job.WorkspaceID, job.MeetingID = domain.ProcessingJobID(id), domain.WorkspaceID(workspaceID), domain.MeetingID(meetingID)
@@ -55,9 +55,9 @@ func (r *JobRepository) Enqueue(ctx context.Context, job domain.ProcessingJob) e
 		value := string(*job.MediaAssetID)
 		assetID = &value
 	}
-	_, err := r.pool.Exec(ctx, `INSERT INTO processing_jobs (id, workspace_id, meeting_id, media_asset_id, type, status, attempts, max_attempts, run_after, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, 'queued', 0, $6, $7, $8, $8)`,
-		string(job.ID), string(job.WorkspaceID), string(job.MeetingID), assetID, string(job.Type), job.MaxAttempts, job.RunAfter, job.CreatedAt)
+	_, err := r.pool.Exec(ctx, `INSERT INTO processing_jobs (id, workspace_id, meeting_id, media_asset_id, type, status, attempts, max_attempts, run_after, created_at, updated_at, parameters)
+VALUES ($1, $2, $3, $4, $5, 'queued', 0, $6, $7, $8, $8, $9::jsonb)`,
+		string(job.ID), string(job.WorkspaceID), string(job.MeetingID), assetID, string(job.Type), job.MaxAttempts, job.RunAfter, job.CreatedAt, jsonParam(job.Parameters))
 	if err != nil {
 		return translate("enqueue job", err)
 	}
@@ -215,6 +215,25 @@ WHERE status = 'running' AND lease_expires_at < $1 AND attempts >= max_attempts`
 		return 0, translate("fail exhausted jobs", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+func (r *JobRepository) SaveCheckpoint(ctx context.Context, id domain.ProcessingJobID, attempt int, checkpoint []byte, now time.Time) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	tag, err := r.pool.Exec(ctx, `UPDATE processing_jobs SET checkpoint = $3::jsonb, updated_at = $4
+WHERE id = $1 AND attempts = $2 AND status = 'running'`, string(id), attempt, jsonParam(checkpoint), now)
+	if err != nil {
+		return false, translate("save job checkpoint", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// jsonParam passes raw JSON to a jsonb parameter; empty means SQL NULL.
+func jsonParam(raw []byte) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return string(raw)
 }
 
 // prefixed qualifies a column list with a table alias.

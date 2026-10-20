@@ -142,6 +142,10 @@ contract.
 | GET | `/api/v1/media/:mediaAssetId/transcript` | path ID | `MediaTranscriptResponse` |
 | POST | `/api/v1/media/:mediaAssetId/transcription` | none | `ProcessingJobResponse` (202; 409 `already_processing`/`not_ready`; 503 when unavailable) |
 | POST | `/api/v1/jobs/:jobId/cancel` | none | `ProcessingJobResponse` (409 when already finished) |
+| GET | `/api/v1/meetings/:meetingId/summary` | path ID | `MeetingSummaryResponse` |
+| POST | `/api/v1/meetings/:meetingId/summary` | optional `GenerateSummaryRequest` | `ProcessingJobResponse` (202; 409 `transcript_not_ready`/`already_processing`/configuration reason; 503 when disabled) |
+| POST | `/api/v1/meetings/:meetingId/summary/cancel` | none | `ProcessingJobResponse` (409 `not_running`) |
+| GET | `/api/v1/summary-templates` | none | `SummaryTemplateListResponse` |
 
 Media routes and their semantics are described in
 `docs/voxa-web-recording.md`. `MediaAsset` gained `status` (`uploading`,
@@ -156,6 +160,16 @@ Additive changes: `Transcript` gained `mediaAssetId`, `asrEngine`,
 text; internal errors, attempts and leases are never exposed) and the
 `remux` kind. Segments are recording-relative seconds with
 `timingProvenance: "asr"`, `isFinal: true` and `confidence: null`.
+
+Summaries (`docs/server-summaries.md`): `MeetingSummaryResponse` is
+`{meetingId, state, reason, stale, currentTranscriptId, error, job, summary}`
+with `state` one of `none`, `queued`, `generating`, `ready`, `failed`,
+`cancelled`, `unavailable`. `Summary` gained optional provenance fields
+(`transcriptId`, `mediaAssetId`, `provider`, `model`, `templateId`,
+`outputLanguage`); server summaries use `SummaryMarkdownContent` as
+`content`. `GenerateSummaryRequest` accepts only `templateId` and
+`customPrompt`: provider, model, endpoints and keys are never request
+fields.
 
 `health` and `capabilities` are public. Every other route requires
 authentication: `401 unauthorized` without a valid bearer token, `403
@@ -292,8 +306,9 @@ capabilities to/from the shared protocol.
 - any replacement/migration of desktop SQLite;
 - S3-compatible object storage (filesystem storage, chunked resumable
   upload, signed URLs and range playback exist);
-- summary, import and diarization job execution (remux and transcription
-  jobs run on an in-process PostgreSQL queue; see `docs/server-processing.md`);
+- import and diarization job execution (remux, transcription and summary
+  jobs run on an in-process PostgreSQL queue; see `docs/server-processing.md`
+  and `docs/server-summaries.md`);
 - any microservice or distributed worker split;
 - browser/PWA recording and capture APIs;
 - Android capture;
