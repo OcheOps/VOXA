@@ -85,17 +85,24 @@ type CleanupReport struct {
 	FailedUploads  int
 	RemovedStaging int
 	RemovedOrphans int
+	RemovedTemp    int
 }
 
 // MediaService owns recording uploads and media access. Every operation is
 // scoped by workspace; the storage layer only ever sees opaque keys.
+// RemuxEnqueuer schedules post-upload processing (implemented by processing.Queue).
+type RemuxEnqueuer interface {
+	EnqueueRemux(ctx context.Context, asset domain.MediaAsset) error
+}
+
 type MediaService struct {
-	meetings repository.MeetingRepository
-	media    repository.MediaRepository
-	store    mediastore.Store
-	limits   MediaLimits
-	now      func() time.Time
-	newID    func(prefix string) (string, error)
+	processing RemuxEnqueuer
+	meetings   repository.MeetingRepository
+	media      repository.MediaRepository
+	store      mediastore.Store
+	limits     MediaLimits
+	now        func() time.Time
+	newID      func(prefix string) (string, error)
 }
 
 func NewMediaService(meetings repository.MeetingRepository, media repository.MediaRepository, store mediastore.Store, limits MediaLimits) *MediaService {
@@ -103,6 +110,9 @@ func NewMediaService(meetings repository.MeetingRepository, media repository.Med
 }
 
 func (s *MediaService) Limits() MediaLimits { return s.limits }
+
+// SetProcessing enables post-upload processing for finalized recordings.
+func (s *MediaService) SetProcessing(enqueuer RemuxEnqueuer) { s.processing = enqueuer }
 
 func (s *MediaService) timestamp() time.Time { return s.now().UTC().Truncate(time.Microsecond) }
 
@@ -298,6 +308,11 @@ func (s *MediaService) Finalize(ctx context.Context, workspaceID domain.Workspac
 	}
 	// Staged chunks are no longer needed; leftovers are removed by cleanup.
 	_ = s.store.DeleteUpload(ctx, asset.StorageKey)
+	if s.processing != nil {
+		// Best effort: if this fails, the worker's reconciliation enqueues
+		// the remux for any ready, unprocessed recording.
+		_ = s.processing.EnqueueRemux(ctx, ready)
+	}
 	return ready, nil
 }
 
@@ -349,6 +364,10 @@ func (s *MediaService) DeleteAsset(ctx context.Context, workspaceID domain.Works
 	}
 	_ = s.store.DeleteObject(ctx, asset.StorageKey)
 	_ = s.store.DeleteUpload(ctx, asset.StorageKey)
+	if asset.OriginalStorageKey != nil {
+		// Processed recordings keep the original upload as well.
+		_ = s.store.DeleteObject(ctx, *asset.OriginalStorageKey)
+	}
 	return nil
 }
 
@@ -384,6 +403,11 @@ func (s *MediaService) Cleanup(ctx context.Context) (CleanupReport, error) {
 		} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return report, err
 		}
+	}
+
+	// Scratch space abandoned by crashed processing runs.
+	if removed, err := s.store.RemoveStaleTemp(ctx, now.Add(-24*time.Hour)); err == nil {
+		report.RemovedTemp = removed
 	}
 
 	objects, err := s.store.ListObjects(ctx)

@@ -7,8 +7,9 @@ browser microphone → MediaRecorder chunks → IndexedDB → chunked, resumable
   → server staging → assembled object + MediaAsset (PostgreSQL) → signed range playback in <audio>
 ```
 
-There is no transcription or summarization yet. The desktop (Tauri)
-recording pipeline is untouched.
+Finalized recordings are then remuxed and transcribed on the server (see
+`docs/server-processing.md`). There is no summarization yet. The desktop
+(Tauri) recording pipeline is untouched.
 
 ## 1. Browser recording architecture
 
@@ -247,15 +248,13 @@ recording capabilities. It is not implemented and is reported unavailable.
 See §5–6: a second `mediastore.Store` implementation, selected by
 configuration, with no protocol changes.
 
-## 15. Future transcription integration
+## 15. Transcription integration
 
-A `ready` MediaAsset is the input for a server transcription job:
-1. remux or transcode (also fixing WebM duration and cues);
-2. run Whisper;
-3. produce a Transcript.
-
-The server would then advertise `transcription.available`, and
-`HttpTranscriptionClient` would replace the unavailable client.
+Implemented: finalizing a recording enqueues a remux job (stream copy,
+fixing WebM duration and cues, keeping the original upload) followed by a
+whisper.cpp transcription job. The server advertises
+`transcription.available` only when the engine is usable, and Voxa Web uses
+`HttpTranscriptionClient`. See `docs/server-processing.md`.
 
 ## Manual validation checklist
 

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MaxChunkIndex bounds chunk indices (and the number of chunks per upload).
@@ -271,6 +272,79 @@ func (f *Filesystem) list(dir string) ([]UploadInfo, error) {
 
 func (f *Filesystem) ListUploads(context.Context) ([]UploadInfo, error) { return f.list("staging") }
 func (f *Filesystem) ListObjects(context.Context) ([]UploadInfo, error) { return f.list("objects") }
+
+func (f *Filesystem) OpenLocal(_ context.Context, objectKey string) (string, func(), error) {
+	if err := checkKey(objectKey); err != nil {
+		return "", nil, err
+	}
+	path := f.objectPath(objectKey)
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return "", nil, ErrNotFound
+	} else if err != nil {
+		return "", nil, err
+	}
+	return path, func() {}, nil
+}
+
+func (f *Filesystem) PutObjectFile(_ context.Context, objectKey, sourcePath string) (ObjectInfo, error) {
+	if err := checkKey(objectKey); err != nil {
+		return ObjectInfo{}, err
+	}
+	tmp, err := filepath.Rel(filepath.Join(f.root, "tmp"), sourcePath)
+	if err != nil || strings.HasPrefix(tmp, "..") || filepath.IsAbs(tmp) {
+		return ObjectInfo{}, fmt.Errorf("source must be inside a media work directory")
+	}
+	source, err := os.OpenFile(sourcePath, os.O_RDWR, 0)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	syncErr := source.Sync()
+	closeErr := source.Close()
+	if syncErr != nil {
+		return ObjectInfo{}, syncErr
+	}
+	if closeErr != nil {
+		return ObjectInfo{}, closeErr
+	}
+	final := f.objectPath(objectKey)
+	if err := os.Rename(sourcePath, final); err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := syncDir(filepath.Dir(final)); err != nil {
+		return ObjectInfo{}, err
+	}
+	stat, err := os.Stat(final)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{Size: stat.Size(), ModTime: stat.ModTime()}, nil
+}
+
+func (f *Filesystem) WorkDir(context.Context) (string, func(), error) {
+	dir, err := os.MkdirTemp(filepath.Join(f.root, "tmp"), "work-*")
+	if err != nil {
+		return "", nil, err
+	}
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
+}
+
+func (f *Filesystem) RemoveStaleTemp(_ context.Context, before time.Time) (int, error) {
+	entries, err := os.ReadDir(filepath.Join(f.root, "tmp"))
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(before) {
+			continue
+		}
+		if os.RemoveAll(filepath.Join(f.root, "tmp", entry.Name())) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
 
 func hashFile(path string) (ChunkInfo, error) {
 	file, err := os.Open(path)

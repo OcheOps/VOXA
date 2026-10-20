@@ -137,10 +137,25 @@ contract.
 | POST | `/api/v1/media/:mediaAssetId/finalize` | `FinalizeMediaRequest` | `MediaAssetResponse` |
 | GET | `/api/v1/media/:mediaAssetId/playback` | path ID | `MediaPlaybackResponse` (signed URL) |
 | GET | `/api/v1/media/:mediaAssetId/content` | `Range` optional | audio bytes (206 for ranges) |
+| GET | `/api/v1/meetings/:meetingId/jobs` | path ID | `ProcessingJobListResponse` |
+| GET | `/api/v1/meetings/:meetingId/transcript` | path ID | `MediaTranscriptResponse` (latest ready recording) |
+| GET | `/api/v1/media/:mediaAssetId/transcript` | path ID | `MediaTranscriptResponse` |
+| POST | `/api/v1/media/:mediaAssetId/transcription` | none | `ProcessingJobResponse` (202; 409 `already_processing`/`not_ready`; 503 when unavailable) |
+| POST | `/api/v1/jobs/:jobId/cancel` | none | `ProcessingJobResponse` (409 when already finished) |
 
 Media routes and their semantics are described in
 `docs/voxa-web-recording.md`. `MediaAsset` gained `status` (`uploading`,
 `ready`, `failed`) and `updatedAt`, an additive change.
+
+Processing routes are described in `docs/server-processing.md`.
+`MediaTranscriptResponse` is `{mediaAssetId, state, error, transcript}` with
+`state` one of `none`, `preparing`, `transcribing`, `ready`, `failed`,
+`cancelled`, `unavailable`; `transcript` is non-null only when one exists.
+Additive changes: `Transcript` gained `mediaAssetId`, `asrEngine`,
+`asrModel`; `ProcessingJob` gained `mediaAssetId`, `errorMessage` (public
+text; internal errors, attempts and leases are never exposed) and the
+`remux` kind. Segments are recording-relative seconds with
+`timingProvenance: "asr"`, `isFinal: true` and `confidence: null`.
 
 `health` and `capabilities` are public. Every other route requires
 authentication: `401 unauthorized` without a valid bearer token, `403
@@ -277,8 +292,9 @@ capabilities to/from the shared protocol.
 - any replacement/migration of desktop SQLite;
 - S3-compatible object storage (filesystem storage, chunked resumable
   upload, signed URLs and range playback exist);
-- transcription, summary, import/transcode and diarization job execution;
-- queue/workers or any microservice split;
+- summary, import and diarization job execution (remux and transcription
+  jobs run on an in-process PostgreSQL queue; see `docs/server-processing.md`);
+- any microservice or distributed worker split;
 - browser/PWA recording and capture APIs;
 - Android capture;
 - speaker diarization implementation;

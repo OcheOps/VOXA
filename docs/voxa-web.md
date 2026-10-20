@@ -66,7 +66,8 @@ Clients:
 | Identity | `HttpIdentityClient`: `GET /api/v1/me` and `GET /api/v1/capabilities`. |
 | Recording | `BrowserRecordingClient`: microphone via `getUserMedia` + `MediaRecorder` (see `docs/voxa-web-recording.md`). |
 | Media | `HttpMediaClient`: chunked uploads, meeting media, signed range playback. |
-| Transcription, summaries | `Unavailable*` clients (`src/clients/unavailable.ts`): honest capabilities, idle or empty queries, no-op subscriptions, and `UnsupportedOperationError` for actions. |
+| Transcription | `HttpTranscriptionClient`: remote execution (no model management or download, no imports); per-recording transcript state and segments, request (re)transcription, cancel processing. See `docs/server-processing.md`. |
+| Summaries | `UnavailableSummaryClient` (`src/clients/unavailable.ts`): honest capabilities, idle or empty queries, no-op subscriptions, and `UnsupportedOperationError` for actions. |
 
 DTOs are typed against `@voxa/protocol` through a type-only `tsconfig` path,
 so there is no runtime dependency and no build step.
@@ -233,12 +234,15 @@ API over HTTPS, because bearer tokens over plain HTTP are exposed.
   - start, pause/resume and stop, with a consent reminder;
   - parts are saved on the device while offline, uploads resume
     automatically, and recordings are recovered after a reload;
-  - range-streamed playback (see `docs/voxa-web-recording.md`).
+  - range-streamed playback (see `docs/voxa-web-recording.md`);
+  - per-recording processing status (preparing, transcribing, ready,
+    failed) and the server transcript; clicking a segment seeks playback
+    (see `docs/server-processing.md`).
 
 ## 11. Unsupported in Voxa Web (by design, for now)
 
-Tab or system audio capture, file import, transcription, summaries,
-transcript search,
+Tab or system audio capture, file import, summaries, transcript search,
+transcript editing, diarization,
 local models, the recordings folder, file reveal, the tray, the updater,
 OS notifications, workspace selection, and invitations. Capabilities report
 these truthfully and the UI hides them or explains why they are missing.
@@ -249,10 +253,8 @@ these truthfully and the UI hides them or explains why they are missing.
   `docs/voxa-web-recording.md`). Next is `getDisplayMedia` for tab audio
   where the browser allows it, reported as
   `systemAudioCapture: 'display-media'`.
-- **Transcription and summaries:** media storage exists. Once the server
-  advertises `transcription` and `summary` as available, add
-  `HttpMediaClient` (resumable upload, range playback),
-  `HttpTranscriptionClient` and `HttpSummaryClient` (job creation, status
+- **Summaries:** server transcription exists. Once the server advertises
+  `summary` as available, add `HttpSummaryClient` (job creation, status
   polling, cancellation), selected by the same capabilities.
 - **Desktop views on capabilities:** gradually move the desktop Sidebar and
   meeting page off direct `invoke` calls, so both runtimes share more

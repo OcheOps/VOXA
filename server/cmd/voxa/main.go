@@ -60,7 +60,7 @@ func serve(logger *slog.Logger, databaseURL string) int {
 		return 1
 	}
 
-	mediaOptions, err := openMedia(ctx, logger, os.Getenv, store)
+	mediaOptions, waitWorkers, err := openMedia(ctx, logger, os.Getenv, store)
 	if err != nil {
 		logger.Error("media storage startup failed", "error", err)
 		return 1
@@ -121,6 +121,8 @@ func serve(logger *slog.Logger, databaseURL string) int {
 	}
 	// Let in-flight requests drain before the deferred pool close.
 	<-shutdownDone
+	// Running jobs are released back to the queue before the pool closes.
+	waitWorkers()
 	logger.Info("Voxa server stopped")
 	return 0
 }

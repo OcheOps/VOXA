@@ -30,8 +30,14 @@ export interface TranscriptSegment {
   speakerId?: string | null;
   timingProvenance?: TranscriptTimingProvenance | null;
 }
-export interface Transcript { id: TranscriptId; workspaceId: WorkspaceId; meetingId: MeetingId; processingJobId: ProcessingJobId | null; language: string | null; segments: TranscriptSegment[]; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
+/**
+ * A transcript of one recording. Segment times are relative to the start of
+ * that recording. `asrEngine`/`asrModel` record which recognizer produced it.
+ */
+export interface Transcript { id: TranscriptId; workspaceId: WorkspaceId; meetingId: MeetingId; mediaAssetId: MediaAssetId | null; processingJobId: ProcessingJobId | null; language: string | null; asrEngine: string | null; asrModel: string | null; segments: TranscriptSegment[]; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
 export interface Summary { id: SummaryId; workspaceId: WorkspaceId; meetingId: MeetingId; processingJobId: ProcessingJobId | null; content: JsonValue; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
-export type ProcessingJobKind = 'transcription' | 'summary' | 'import' | 'transcode' | 'diarization';
+/** `remux` rewrites a recording's container (stream copy) for reliable duration and seeking. */
+export type ProcessingJobKind = 'remux' | 'transcription' | 'summary' | 'import' | 'transcode' | 'diarization';
 export type ProcessingJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-export interface ProcessingJob { id: ProcessingJobId; workspaceId: WorkspaceId; meetingId: MeetingId; kind: ProcessingJobKind; status: ProcessingJobStatus; progress: number | null; errorCode: string | null; createdAt: IsoDateTime; startedAt: IsoDateTime | null; completedAt: IsoDateTime | null; }
+/** `errorCode`/`errorMessage` are user-safe; internal diagnostics never leave the server. */
+export interface ProcessingJob { id: ProcessingJobId; workspaceId: WorkspaceId; meetingId: MeetingId; mediaAssetId: MediaAssetId | null; kind: ProcessingJobKind; status: ProcessingJobStatus; progress: number | null; errorCode: string | null; errorMessage: string | null; createdAt: IsoDateTime; startedAt: IsoDateTime | null; completedAt: IsoDateTime | null; }

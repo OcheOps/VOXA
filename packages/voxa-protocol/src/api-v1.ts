@@ -1,6 +1,6 @@
-import type { IsoDateTime, JsonValue, MediaAsset, Meeting, RecordingSession, WorkspaceRole } from './domain.js';
+import type { IsoDateTime, JsonValue, MediaAsset, Meeting, ProcessingJob, RecordingSession, Transcript, WorkspaceRole } from './domain.js';
 import type { CredentialStatus, CredentialWriteRequest } from './credentials.js';
-import type { MediaAssetId, MeetingId, UserId, WorkspaceId } from './ids.js';
+import type { MediaAssetId, MeetingId, ProcessingJobId, UserId, WorkspaceId } from './ids.js';
 
 export const API_V1 = {
   health: '/api/v1/health', capabilities: '/api/v1/capabilities', me: '/api/v1/me',
@@ -15,6 +15,11 @@ export const API_V1 = {
   mediaFinalize: '/api/v1/media/:mediaAssetId/finalize',
   mediaPlayback: '/api/v1/media/:mediaAssetId/playback',
   mediaContent: '/api/v1/media/:mediaAssetId/content',
+  meetingJobs: '/api/v1/meetings/:meetingId/jobs',
+  meetingTranscript: '/api/v1/meetings/:meetingId/transcript',
+  mediaTranscript: '/api/v1/media/:mediaAssetId/transcript',
+  mediaTranscription: '/api/v1/media/:mediaAssetId/transcription',
+  jobCancel: '/api/v1/jobs/:jobId/cancel',
 } as const;
 
 export interface HealthResponse { status: 'ok'; apiVersion: 'v1'; serverVersion: string; }
@@ -65,6 +70,19 @@ export interface MeetingMediaResponse { items: MediaAsset[]; }
  * requests; request a new one when it expires.
  */
 export interface MediaPlaybackResponse { url: string; expiresAt: IsoDateTime; }
+
+/**
+ * User-facing processing state of a recording (no queue internals):
+ * preparing = making the recording seekable; transcribing; ready = transcript
+ * available; failed/cancelled (see `error`); unavailable = this server cannot
+ * transcribe; none = nothing to do (e.g. upload not finished).
+ */
+export type ProcessingState = 'none' | 'preparing' | 'transcribing' | 'ready' | 'failed' | 'cancelled' | 'unavailable';
+export interface ProcessingError { code: string; message: string; }
+/** `transcript` is null until one exists; it is never faked as empty text. */
+export interface MediaTranscriptResponse { mediaAssetId: MediaAssetId | null; state: ProcessingState; error: ProcessingError | null; transcript: Transcript | null; }
+export interface ProcessingJobListResponse { items: ProcessingJob[]; }
+export interface ProcessingJobResponse { job: ProcessingJob; }
 
 export interface CursorPage { nextCursor: string | null; hasMore: boolean; }
 export interface MeetingListQuery { cursor?: string; limit?: number; }
@@ -137,4 +155,9 @@ export interface ApiV1Contract {
   finalizeMedia: Endpoint<'POST', typeof API_V1.mediaFinalize, { mediaAssetId: MediaAssetId; body: FinalizeMediaRequest }, MediaAssetResponse>;
   getMediaPlayback: Endpoint<'GET', typeof API_V1.mediaPlayback, { mediaAssetId: MediaAssetId }, MediaPlaybackResponse>;
   getMediaContent: Endpoint<'GET', typeof API_V1.mediaContent, { mediaAssetId: MediaAssetId; range?: string }, Blob>;
+  listMeetingJobs: Endpoint<'GET', typeof API_V1.meetingJobs, { meetingId: MeetingId }, ProcessingJobListResponse>;
+  getMeetingTranscript: Endpoint<'GET', typeof API_V1.meetingTranscript, { meetingId: MeetingId }, MediaTranscriptResponse>;
+  getMediaTranscript: Endpoint<'GET', typeof API_V1.mediaTranscript, { mediaAssetId: MediaAssetId }, MediaTranscriptResponse>;
+  requestTranscription: Endpoint<'POST', typeof API_V1.mediaTranscription, { mediaAssetId: MediaAssetId }, ProcessingJobResponse>;
+  cancelJob: Endpoint<'POST', typeof API_V1.jobCancel, { jobId: ProcessingJobId }, ProcessingJobResponse>;
 }

@@ -113,15 +113,9 @@ function MeetingDetail() {
       </header>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Recording</h2>
+        <h2 className="text-sm font-semibold text-gray-700">Recordings and transcripts</h2>
         <RecordingPanel meetingId={meeting.id} />
         <MeetingMedia meetingId={meeting.id} />
-      </section>
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-gray-700">Transcript</h2>
-        <p className="text-sm text-gray-500">
-          {client.meetings.capabilities.transcripts ? 'No transcript yet.' : 'Transcripts are not available in Voxa Web yet.'}
-        </p>
       </section>
       <CapabilityNotice />
 

@@ -83,6 +83,9 @@ The module requires Go 1.25 or newer, because pgx v5.10 requires it.
 | `VOXA_DEV_WORKSPACE_ID` | `workspace-dev` | `development` mode only: the fixed workspace. Ignored in `oidc` mode. |
 | `VOXA_MEDIA_DIR` | unset | Enables media storage (recording uploads and playback) under this directory (outside the source tree, e.g. `/var/lib/voxa/media`). Unset means media is unavailable and capabilities say so. |
 | `VOXA_MEDIA_MAX_RECORDING_MB` | `1024` | Maximum size of one recording. Chunks are capped at 8 MiB and stale uploads expire after 48 h (fixed). |
+| `VOXA_WHISPER_MODEL` | unset | Path to a whisper.cpp GGML model (e.g. `/var/lib/voxa/models/ggml-base.en.bin`). Enables server transcription when media storage and ffmpeg are available. Unset means transcription is unavailable. Never downloaded by the server. |
+| `VOXA_WHISPER_BIN` | `whisper-cli` | whisper.cpp CLI binary (name on `PATH` or absolute path). |
+| `VOXA_PROCESSING_WORKERS` | `1` | Concurrent processing jobs in this process (1–16). |
 | `VOXA_ALLOWED_ORIGINS` | unset | Comma-separated exact browser origins allowed to call the API cross-origin (Voxa Web), e.g. `https://voxa.example.com,http://localhost:3118`. Unset means no CORS headers at all. `*` is rejected. See `docs/voxa-web.md`. |
 | `VOXA_DATABASE_URL` | unset | PostgreSQL connection string (URL or key/value). Set: PostgreSQL adapters. Unset: memory adapters. |
 | `VOXA_CREDENTIAL_KEY` | unset | **Required with PostgreSQL.** Base64 (standard, padded) of exactly 32 random bytes. Never logged. |
@@ -179,6 +182,19 @@ streamed with HTTP range support: by bearer at `…/content`, or through a
 2-hour signed URL from `…/playback` for `<audio>` elements. Cleanup runs at
 startup and hourly; it fails stale uploads and removes orphans, never ready
 recordings. Full design: [`docs/voxa-web-recording.md`](../docs/voxa-web-recording.md).
+
+## Processing and transcription
+
+With media enabled and `ffmpeg`/`ffprobe` on `PATH`, in-process workers
+take jobs from a PostgreSQL queue (`FOR UPDATE SKIP LOCKED`, leases,
+bounded retries, migration 0005). A finalized recording is remuxed (stream
+copy, so browser WebM gets a duration and seek index; the original upload is
+kept) and then transcribed by whisper.cpp when `VOXA_WHISPER_MODEL` is set.
+Transcripts are stored per recording with ASR provenance and served at
+`GET /api/v1/media/{id}/transcript`. Missing ffmpeg or an unusable Whisper
+setup is logged and reported through capabilities; the server still starts.
+Full design and manual checklist:
+[`docs/server-processing.md`](../docs/server-processing.md).
 
 ## Migrations
 
@@ -335,8 +351,8 @@ With PostgreSQL:
   transaction (such as `CREATE INDEX CONCURRENTLY`) are not supported yet.
 - Outage classification is conservative. Unrecognized driver failures
   surface as `internal` (500) rather than `unavailable`.
-- Capabilities report media storage, transcription and summaries as
-  unavailable. No upload, object storage, worker, WebSocket or job
-  execution code exists.
+- Summaries are not implemented (capability unavailable). Transcription
+  has no diarization or speaker identification, and its quality has not been
+  evaluated on real meetings. Media is filesystem-only (no object storage).
 - Desktop folders, audio devices, tray behavior, local model paths and other
   native settings are rejected as unknown configuration fields.

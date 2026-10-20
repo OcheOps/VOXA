@@ -550,6 +550,40 @@ export interface ServerMediaClient {
   deleteMedia(mediaAssetId: string): Promise<void>;
 }
 
+/** User-facing processing state of one server recording. */
+export type RecordingProcessingState = 'none' | 'preparing' | 'transcribing' | 'ready' | 'failed' | 'cancelled' | 'unavailable';
+
+export interface TranscriptSegmentView {
+  id: string;
+  text: string;
+  /** Seconds from the start of the recording. */
+  startSeconds: number;
+  endSeconds: number;
+  sequence: number;
+}
+
+export interface RecordingTranscript {
+  mediaAssetId: string | null;
+  state: RecordingProcessingState;
+  error: { code: string; message: string } | null;
+  transcript: {
+    id: string;
+    language: string | null;
+    asrEngine: string | null;
+    asrModel: string | null;
+    segments: TranscriptSegmentView[];
+  } | null;
+}
+
+/** Server-side transcription of stored recordings (web). */
+export interface ServerTranscriptClient {
+  getRecordingTranscript(mediaAssetId: string, signal?: AbortSignal): Promise<RecordingTranscript>;
+  getMeetingTranscript(meetingId: string, signal?: AbortSignal): Promise<RecordingTranscript>;
+  requestTranscription(mediaAssetId: string): Promise<void>;
+  /** Cancels the recording's active processing, if any. */
+  cancelProcessing(meetingId: string, mediaAssetId: string): Promise<boolean>;
+}
+
 /** Provider credential metadata. Secrets are write-only and never read back. */
 export interface CredentialStatus {
   provider: string;
@@ -598,4 +632,6 @@ export interface VoxaClient {
   workspaceSettings?: WorkspaceSettingsClient;
   /** Present only where media is stored on a server (web). */
   serverMedia?: ServerMediaClient;
+  /** Present only where recordings are transcribed on a server (web). */
+  serverTranscripts?: ServerTranscriptClient;
 }

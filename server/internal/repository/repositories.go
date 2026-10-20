@@ -56,8 +56,58 @@ type MediaRepository interface {
 	DeleteAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, error)
 	// ListStaleUploads returns uploading assets (any workspace) with no activity since before.
 	ListStaleUploads(ctx context.Context, before time.Time) ([]domain.MediaAsset, error)
-	// AssetStatusByStorageKey supports orphan cleanup; ErrNotFound when no asset uses the key.
+	// AssetStatusByStorageKey supports orphan cleanup: it matches the current
+	// or original storage key; ErrNotFound when no asset uses the key.
 	AssetStatusByStorageKey(ctx context.Context, storageKey string) (domain.MediaAssetStatus, error)
+	// SetProcessedMedia switches a ready asset to a processed playback object,
+	// keeping the previous object as the original upload.
+	SetProcessedMedia(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, storageKey, mimeType string, sizeBytes int64, durationSeconds *float64, at time.Time) (domain.MediaAsset, error)
+	// MarkProcessed records that processing finished without a new object
+	// (e.g. remux failed permanently); the asset keeps its current object.
+	MarkProcessed(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, durationSeconds *float64, at time.Time) error
+	// ListUnprocessedReady returns ready assets (any workspace) with no
+	// processing record, for queue reconciliation.
+	ListUnprocessedReady(ctx context.Context, limit int) ([]domain.MediaAsset, error)
+}
+
+// JobRepository is the processing queue. Claims are exclusive: a claimed
+// job carries its attempt number, which acts as a fencing token for
+// Heartbeat/Complete/Fail/Release so a worker whose lease expired cannot
+// overwrite a newer attempt.
+type JobRepository interface {
+	// Enqueue adds a job; ErrConflict when an active job of the same type
+	// already exists for the media asset.
+	Enqueue(ctx context.Context, job domain.ProcessingJob) error
+	// Claim leases up to limit runnable jobs: queued jobs whose run_after has
+	// passed, and running jobs whose lease expired (abandoned) with attempts
+	// remaining. Each claim increments Attempts.
+	Claim(ctx context.Context, types []domain.ProcessingJobType, limit int, lease time.Duration, now time.Time) ([]domain.ProcessingJob, error)
+	// Heartbeat extends the lease and records progress. It reports false
+	// when the job is no longer running under this attempt (cancelled,
+	// reclaimed), which tells the worker to stop.
+	Heartbeat(ctx context.Context, id domain.ProcessingJobID, attempt int, lease time.Duration, progress *float64, now time.Time) (bool, error)
+	Complete(ctx context.Context, id domain.ProcessingJobID, attempt int, now time.Time) error
+	// Fail records an error; with retryAt set (and attempts remaining) the
+	// job is queued again at that time, otherwise it becomes failed.
+	Fail(ctx context.Context, id domain.ProcessingJobID, attempt int, code, message, internal string, retryAt *time.Time, now time.Time) error
+	// Release returns a job to the queue without consuming the attempt
+	// (graceful worker shutdown).
+	Release(ctx context.Context, id domain.ProcessingJobID, attempt int, now time.Time) error
+	// Cancel stops a queued or running job; ErrConflict when it already ended.
+	Cancel(ctx context.Context, workspaceID domain.WorkspaceID, id domain.ProcessingJobID, now time.Time) (domain.ProcessingJob, error)
+	GetJob(ctx context.Context, workspaceID domain.WorkspaceID, id domain.ProcessingJobID) (domain.ProcessingJob, error)
+	ListMeetingJobs(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.ProcessingJob, error)
+	ListAssetJobs(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) ([]domain.ProcessingJob, error)
+	// FailExhausted marks abandoned running jobs with no attempts left as failed.
+	FailExhausted(ctx context.Context, now time.Time) (int, error)
+}
+
+// TranscriptRepository stores one current transcript per media asset.
+type TranscriptRepository interface {
+	// Replace atomically stores transcript as the asset's transcript,
+	// replacing any previous one (retranscription).
+	Replace(ctx context.Context, transcript domain.Transcript) error
+	GetByAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.Transcript, error)
 }
 
 // IdentityRepository stores Voxa users, workspace memberships and the

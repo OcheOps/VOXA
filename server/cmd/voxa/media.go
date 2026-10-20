@@ -34,25 +34,27 @@ func loadMediaLimits(getenv func(string) string) (application.MediaLimits, error
 	return limits, nil
 }
 
-// openMedia enables the media API when VOXA_MEDIA_DIR is set and starts the
-// cleanup loop. It returns no options when media is disabled.
-func openMedia(ctx context.Context, logger *slog.Logger, getenv func(string) string, store *storage) ([]api.Option, error) {
+// openMedia enables the media API when VOXA_MEDIA_DIR is set, starts the
+// cleanup loop and (when ffmpeg is available) the processing workers. The
+// returned wait function blocks until workers have stopped after ctx ends.
+func openMedia(ctx context.Context, logger *slog.Logger, getenv func(string) string, store *storage) ([]api.Option, func(), error) {
+	noWait := func() {}
 	dir := strings.TrimSpace(getenv(mediaDirEnv))
 	if dir == "" {
 		logger.Info("media storage disabled (VOXA_MEDIA_DIR not set)")
-		return nil, nil
+		return nil, noWait, nil
 	}
 	limits, err := loadMediaLimits(getenv)
 	if err != nil {
-		return nil, err
+		return nil, noWait, err
 	}
 	files, err := mediastore.NewFilesystem(dir)
 	if err != nil {
-		return nil, err
+		return nil, noWait, err
 	}
 	signer, err := api.NewPlaybackSigner(api.DefaultPlaybackTTL)
 	if err != nil {
-		return nil, err
+		return nil, noWait, err
 	}
 	service := application.NewMediaService(store.meetings, store.media, files, limits)
 	absolute, _ := filepath.Abs(dir)
@@ -87,5 +89,13 @@ func openMedia(ctx context.Context, logger *slog.Logger, getenv func(string) str
 			}
 		}
 	}()
-	return []api.Option{api.WithMedia(service, signer)}, nil
+	options := []api.Option{api.WithMedia(service, signer)}
+	processingOption, wait, err := openProcessing(ctx, logger, getenv, store, files, service)
+	if err != nil {
+		return nil, noWait, err
+	}
+	if processingOption != nil {
+		options = append(options, processingOption)
+	}
+	return options, wait, nil
 }

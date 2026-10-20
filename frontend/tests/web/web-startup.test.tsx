@@ -120,7 +120,7 @@ describe('web runtime startup', () => {
     let detail!: ReactTestRenderer;
     await act(async () => { detail = create(<WebApp><WebMeetingDetail /></WebApp>); });
     await settle();
-    expect(text(detail)).toContain('Transcripts are not available in Voxa Web yet');
+    expect(text(detail)).toContain('Recordings and transcripts');
     detail.unmount();
 
     pathname = '/settings';

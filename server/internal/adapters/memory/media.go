@@ -154,11 +154,60 @@ func (r *MediaRepository) AssetStatusByStorageKey(_ context.Context, storageKey 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, asset := range r.assets {
-		if asset.StorageKey == storageKey {
+		if asset.StorageKey == storageKey || asset.OriginalStorageKey != nil && *asset.OriginalStorageKey == storageKey {
 			return asset.Status, nil
 		}
 	}
 	return "", repository.ErrNotFound
+}
+
+func (r *MediaRepository) SetProcessedMedia(_ context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, storageKey, mimeType string, sizeBytes int64, durationSeconds *float64, at time.Time) (domain.MediaAsset, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	asset, ok := r.find(workspaceID, assetID)
+	if !ok {
+		return domain.MediaAsset{}, repository.ErrNotFound
+	}
+	if asset.Status != domain.MediaAssetReady {
+		return domain.MediaAsset{}, repository.ErrConflict
+	}
+	if asset.OriginalStorageKey == nil {
+		original := asset.StorageKey
+		asset.OriginalStorageKey = &original
+	}
+	asset.StorageKey, asset.MimeType, asset.SizeBytes, asset.UpdatedAt, asset.ProcessedAt = storageKey, mimeType, sizeBytes, at, &at
+	if durationSeconds != nil {
+		asset.DurationSeconds = durationSeconds
+	}
+	r.assets[assetID] = asset
+	return asset, nil
+}
+
+func (r *MediaRepository) MarkProcessed(_ context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, durationSeconds *float64, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	asset, ok := r.find(workspaceID, assetID)
+	if !ok {
+		return repository.ErrNotFound
+	}
+	asset.ProcessedAt, asset.UpdatedAt = &at, at
+	if durationSeconds != nil {
+		asset.DurationSeconds = durationSeconds
+	}
+	r.assets[assetID] = asset
+	return nil
+}
+
+func (r *MediaRepository) ListUnprocessedReady(_ context.Context, limit int) ([]domain.MediaAsset, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var items []domain.MediaAsset
+	for _, asset := range r.assets {
+		if asset.Status == domain.MediaAssetReady && asset.ProcessedAt == nil && len(items) < limit {
+			items = append(items, asset)
+		}
+	}
+	return items, nil
 }
 
 // Session returns a stored session (test helper).

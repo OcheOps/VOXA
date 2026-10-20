@@ -27,10 +27,12 @@ type storage struct {
 	configurations repository.ConfigurationRepository
 	credentials    repository.CredentialRepository
 	// identities is nil in memory mode (OIDC requires PostgreSQL).
-	identities repository.IdentityRepository
-	media      repository.MediaRepository
-	ready      func(context.Context) error
-	close      func()
+	identities  repository.IdentityRepository
+	media       repository.MediaRepository
+	jobs        repository.JobRepository
+	transcripts repository.TranscriptRepository
+	ready       func(context.Context) error
+	close       func()
 }
 
 // openStorage selects and initializes repositories. ensureWorkspace, when
@@ -50,6 +52,8 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 			configurations: memory.NewConfigurationRepository(defaults),
 			credentials:    memory.NewCredentialRepository(),
 			media:          memory.NewMediaRepository(),
+			jobs:           memory.NewJobRepository(),
+			transcripts:    memory.NewTranscriptRepository(),
 			ready:          func(context.Context) error { return nil },
 			close:          func() {},
 		}, nil
@@ -114,6 +118,8 @@ func openStorage(ctx context.Context, logger *slog.Logger, getenv func(string) s
 		credentials:    postgres.NewCredentialRepository(pool, credentialcrypto.NewCipher(keyRing)),
 		identities:     postgres.NewIdentityRepository(pool),
 		media:          postgres.NewMediaRepository(pool),
+		jobs:           postgres.NewJobRepository(pool),
+		transcripts:    postgres.NewTranscriptRepository(pool),
 		ready:          pool.Ping,
 		close:          pool.Close,
 	}, nil

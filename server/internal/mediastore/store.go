@@ -65,4 +65,18 @@ type Store interface {
 	DeleteUpload(ctx context.Context, uploadKey string) error
 	ListUploads(ctx context.Context) ([]UploadInfo, error)
 	ListObjects(ctx context.Context) ([]UploadInfo, error)
+
+	// Processing support. A remote backend would download/upload here.
+
+	// OpenLocal returns a readable local path for an object (for external
+	// tools) and a release function the caller must invoke.
+	OpenLocal(ctx context.Context, objectKey string) (path string, release func(), err error)
+	// PutObjectFile atomically installs a local file (inside a WorkDir) as
+	// object objectKey.
+	PutObjectFile(ctx context.Context, objectKey, sourcePath string) (ObjectInfo, error)
+	// WorkDir creates a private scratch directory; cleanup removes it.
+	WorkDir(ctx context.Context) (dir string, cleanup func(), err error)
+	// RemoveStaleTemp deletes scratch files and directories older than before
+	// (left behind by crashes).
+	RemoveStaleTemp(ctx context.Context, before time.Time) (int, error)
 }

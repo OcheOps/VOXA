@@ -7,15 +7,20 @@ import type { ServerMediaAsset } from '@/clients/contracts';
 import { Button } from '@/components/ui/button';
 import { describeError } from '../errors';
 import { formatDuration, useUploadJobs } from './hooks';
+import { TranscriptPanel, type SeekTarget } from './TranscriptPanel';
 
 /**
  * Streams a ready recording through a short-lived signed URL with HTTP range
  * requests (no full download or decoding into memory). If the URL expires
  * mid-session, a fresh one is fetched and playback resumes at the same time.
  */
-function Player({ asset }: { asset: ServerMediaAsset }) {
+function Player({ asset, onElement }: { asset: ServerMediaAsset; onElement?: (element: HTMLAudioElement | null) => void }) {
   const { serverMedia } = useVoxaClient();
-  const audio = useRef<HTMLAudioElement>(null);
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const attach = useCallback((element: HTMLAudioElement | null) => {
+    audio.current = element;
+    onElement?.(element);
+  }, [onElement]);
   const [url, setUrl] = useState<string | null>(null);
   const refreshed = useRef(false);
 
@@ -40,9 +45,37 @@ function Player({ asset }: { asset: ServerMediaAsset }) {
 
   if (!url) return <p className="text-xs text-gray-500">Loading player…</p>;
   return (
-    <audio ref={audio} controls preload="metadata" src={url} onError={() => void onError()} onPlaying={() => { refreshed.current = false; }} className="w-full">
+    <audio ref={attach} controls preload="metadata" src={url} onError={() => void onError()} onPlaying={() => { refreshed.current = false; }} className="w-full">
       Your browser cannot play this recording.
     </audio>
+  );
+}
+
+/** One stored recording: player plus processing status and transcript. */
+function Recording({ meetingId, asset, onChanged, onDelete }: { meetingId: string; asset: ServerMediaAsset; onChanged: () => void; onDelete: () => void }) {
+  const [element, setElement] = useState<HTMLAudioElement | null>(null);
+  const seekTarget: SeekTarget | null = element ? {
+    seek(seconds) {
+      element.currentTime = seconds;
+      void element.play().catch(() => {});
+    },
+  } : null;
+  return (
+    <li className="space-y-2 rounded-md border border-gray-200 p-3">
+      <div className="flex items-center gap-2 text-xs text-gray-500">
+        <span>{new Date(asset.createdAt).toLocaleString()}</span>
+        <span>· {formatDuration(asset.durationSeconds)}</span>
+        {asset.status === 'ready' && <span>· {(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>}
+        <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={onDelete} aria-label="Delete recording">Delete</Button>
+      </div>
+      {asset.status === 'ready' && (
+        <>
+          <Player asset={asset} onElement={setElement} />
+          <TranscriptPanel meetingId={meetingId} mediaAssetId={asset.id} player={seekTarget} onProcessed={onChanged} />
+        </>
+      )}
+      {asset.status === 'failed' && <p className="text-sm text-red-700">This upload was not completed and cannot be played.</p>}
+    </li>
   );
 }
 
@@ -79,22 +112,13 @@ export function MeetingMedia({ meetingId }: { meetingId: string }) {
 
   return (
     <ul className="space-y-3">
-      {assets.map((asset) => (
-        <li key={asset.id} className="space-y-1 rounded-md border border-gray-200 p-3">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span>{new Date(asset.createdAt).toLocaleString()}</span>
-            <span>· {formatDuration(asset.durationSeconds)}</span>
-            {asset.status === 'ready' && <span>· {(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>}
-            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => void remove(asset)} aria-label="Delete recording">Delete</Button>
-          </div>
-          {asset.status === 'ready' && <Player asset={asset} />}
-          {asset.status === 'uploading' && (
-            <p className="text-sm text-gray-600">
-              {localJobs.has(asset.id) ? 'Upload in progress (see above).' : 'Incomplete upload. It can only be resumed from the device that recorded it; it will be discarded automatically if it is not completed.'}
-            </p>
-          )}
-          {asset.status === 'failed' && <p className="text-sm text-red-700">This upload was not completed and cannot be played.</p>}
+      {assets.map((asset) => asset.status === 'uploading' ? (
+        <li key={asset.id} className="rounded-md border border-gray-200 p-3 text-sm text-gray-600">
+          {localJobs.has(asset.id) ? 'Upload in progress (see above).' : 'Incomplete upload. It can only be resumed from the device that recorded it; it will be discarded automatically if it is not completed.'}
+          <Button size="sm" variant="ghost" className="ml-2 h-6 px-2 text-xs" onClick={() => void remove(asset)}>Delete</Button>
         </li>
+      ) : (
+        <Recording key={asset.id} meetingId={meetingId} asset={asset} onChanged={() => void load()} onDelete={() => void remove(asset)} />
       ))}
     </ul>
   );

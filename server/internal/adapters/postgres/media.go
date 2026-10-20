@@ -20,14 +20,14 @@ func NewMediaRepository(pool *pgxpool.Pool) *MediaRepository {
 	return &MediaRepository{pool: pool}
 }
 
-const assetColumns = `id, workspace_id, meeting_id, recording_session_id, kind, mime_type, status, size_bytes, duration_seconds, chunk_count, storage_key, created_at, updated_at`
+const assetColumns = `id, workspace_id, meeting_id, recording_session_id, kind, mime_type, status, size_bytes, duration_seconds, chunk_count, storage_key, created_at, updated_at, original_storage_key, processed_at`
 
 func scanAsset(row pgx.Row) (domain.MediaAsset, error) {
 	var asset domain.MediaAsset
 	var id, workspaceID, meetingID, kind, status string
 	var sessionID *string
 	if err := row.Scan(&id, &workspaceID, &meetingID, &sessionID, &kind, &asset.MimeType, &status, &asset.SizeBytes,
-		&asset.DurationSeconds, &asset.ChunkCount, &asset.StorageKey, &asset.CreatedAt, &asset.UpdatedAt); err != nil {
+		&asset.DurationSeconds, &asset.ChunkCount, &asset.StorageKey, &asset.CreatedAt, &asset.UpdatedAt, &asset.OriginalStorageKey, &asset.ProcessedAt); err != nil {
 		return domain.MediaAsset{}, err
 	}
 	asset.ID, asset.WorkspaceID, asset.MeetingID = domain.MediaAssetID(id), domain.WorkspaceID(workspaceID), domain.MeetingID(meetingID)
@@ -59,9 +59,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		value := string(*asset.RecordingSessionID)
 		sessionID = &value
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO media_assets (`+assetColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+	if _, err := tx.Exec(ctx, `INSERT INTO media_assets (`+assetColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		string(asset.ID), string(asset.WorkspaceID), string(asset.MeetingID), sessionID, string(asset.Kind), asset.MimeType, string(asset.Status),
-		asset.SizeBytes, asset.DurationSeconds, asset.ChunkCount, asset.StorageKey, asset.CreatedAt, asset.UpdatedAt); err != nil {
+		asset.SizeBytes, asset.DurationSeconds, asset.ChunkCount, asset.StorageKey, asset.CreatedAt, asset.UpdatedAt, asset.OriginalStorageKey, asset.ProcessedAt); err != nil {
 		return translate("create media asset", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -189,10 +189,58 @@ func (r *MediaRepository) AssetStatusByStorageKey(ctx context.Context, storageKe
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	var status string
-	if err := r.pool.QueryRow(ctx, `SELECT status FROM media_assets WHERE storage_key = $1`, storageKey).Scan(&status); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT status FROM media_assets WHERE storage_key = $1 OR original_storage_key = $1`, storageKey).Scan(&status); err != nil {
 		return "", translate("asset by storage key", err)
 	}
 	return domain.MediaAssetStatus(status), nil
+}
+
+func (r *MediaRepository) SetProcessedMedia(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, storageKey, mimeType string, sizeBytes int64, durationSeconds *float64, at time.Time) (domain.MediaAsset, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	asset, err := scanAsset(r.pool.QueryRow(ctx, `UPDATE media_assets
+SET original_storage_key = COALESCE(original_storage_key, storage_key), storage_key = $3, mime_type = $4, size_bytes = $5,
+    duration_seconds = COALESCE($6, duration_seconds), processed_at = $7, updated_at = $7
+WHERE workspace_id = $1 AND id = $2 AND status = 'ready'
+RETURNING `+assetColumns, string(workspaceID), string(assetID), storageKey, mimeType, sizeBytes, durationSeconds, at))
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, getErr := r.GetAsset(ctx, workspaceID, assetID); getErr != nil {
+			return domain.MediaAsset{}, getErr
+		}
+		return domain.MediaAsset{}, repository.ErrConflict
+	}
+	if err != nil {
+		return domain.MediaAsset{}, translate("set processed media", err)
+	}
+	return asset, nil
+}
+
+func (r *MediaRepository) MarkProcessed(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, durationSeconds *float64, at time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	tag, err := r.pool.Exec(ctx, `UPDATE media_assets SET processed_at = $3, duration_seconds = COALESCE($4, duration_seconds), updated_at = $3 WHERE workspace_id = $1 AND id = $2`,
+		string(workspaceID), string(assetID), at, durationSeconds)
+	if err != nil {
+		return translate("mark processed", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
+func (r *MediaRepository) ListUnprocessedReady(ctx context.Context, limit int) ([]domain.MediaAsset, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	rows, err := r.pool.Query(ctx, `SELECT `+assetColumns+` FROM media_assets WHERE status = 'ready' AND processed_at IS NULL ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return nil, translate("list unprocessed media", err)
+	}
+	assets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.MediaAsset, error) { return scanAsset(row) })
+	if err != nil {
+		return nil, translate("list unprocessed media", err)
+	}
+	return assets, nil
 }
 
 // RecordingSession reads a session (tests and future APIs).

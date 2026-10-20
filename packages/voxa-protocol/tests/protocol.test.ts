@@ -19,6 +19,7 @@ import {
   type ApiErrorResponse,
   type MeResponse,
   type CreateRecordingResponse,
+  type MediaTranscriptResponse,
   WORKSPACE_SELECTION_REQUIRED,
   type Summary,
   type TranscriptSegment,
@@ -146,6 +147,11 @@ describe('API v1 surface', () => {
       mediaFinalize: '/api/v1/media/:mediaAssetId/finalize',
       mediaPlayback: '/api/v1/media/:mediaAssetId/playback',
       mediaContent: '/api/v1/media/:mediaAssetId/content',
+      meetingJobs: '/api/v1/meetings/:meetingId/jobs',
+      meetingTranscript: '/api/v1/meetings/:meetingId/transcript',
+      mediaTranscript: '/api/v1/media/:mediaAssetId/transcript',
+      mediaTranscription: '/api/v1/media/:mediaAssetId/transcription',
+      jobCancel: '/api/v1/jobs/:jobId/cancel',
     });
   });
 
@@ -198,6 +204,25 @@ describe('authenticated identity', () => {
   });
 });
 
+describe('processing protocol', () => {
+  test('transcript responses carry recording-relative ASR segments and user-safe errors', () => {
+    const response: MediaTranscriptResponse = {
+      mediaAssetId: mediaAssetId('med_1'),
+      state: 'ready',
+      error: null,
+      transcript: {
+        id: transcriptId('trn_1'), workspaceId: workspaceId('wsp_1'), meetingId: meetingId('mtg_1'), mediaAssetId: mediaAssetId('med_1'),
+        processingJobId: processingJobId('job_1'), language: 'en', asrEngine: 'whisper.cpp', asrModel: 'ggml-base.en',
+        segments: [{ id: 'trn_1:0', text: 'Hello.', startTimeSeconds: 0.5, endTimeSeconds: 1.5, durationSeconds: 1, sequence: 0, isFinal: true, confidence: null, source: null, timingProvenance: 'asr' }],
+        createdAt: '2026-10-20T10:00:00Z', updatedAt: '2026-10-20T10:00:00Z',
+      },
+    };
+    expect(JSON.parse(JSON.stringify(response))).toEqual(response);
+    const pending: MediaTranscriptResponse = { mediaAssetId: mediaAssetId('med_1'), state: 'transcribing', error: null, transcript: null };
+    expect(pending.transcript).toBeNull();
+  });
+});
+
 describe('media protocol', () => {
   test('recording creation exposes no storage locations', () => {
     const response: CreateRecordingResponse = {
@@ -226,3 +251,6 @@ void unsafeRole;
 // @ts-expect-error Media assets have no client-visible storage location.
 const leakingAsset: import('../src/index.js').MediaAsset = { storageKey: 'obj_x' } as const;
 void leakingAsset;
+// @ts-expect-error Processing states are a closed set; queue internals are not exposed.
+const queueState: MediaTranscriptResponse['state'] = 'remux_job_running';
+void queueState;

@@ -53,9 +53,13 @@ type MediaAsset struct {
 	SizeBytes          int64
 	DurationSeconds    *float64
 	ChunkCount         *int
-	// StorageKey is an internal, opaque media-store locator. It is never
-	// serialized to API clients.
-	StorageKey string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// StorageKey is the internal, opaque media-store locator of the current
+	// playback object. OriginalStorageKey keeps the uploaded bytes after
+	// processing replaces the playback object. Neither is ever serialized.
+	StorageKey         string
+	OriginalStorageKey *string
+	// ProcessedAt is set once remux/probe has produced the playback object.
+	ProcessedAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

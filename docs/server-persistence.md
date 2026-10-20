@@ -154,6 +154,18 @@ See `docs/server-authentication.md`.
 
 See `docs/voxa-web-recording.md`.
 
+`0005_processing.sql` adds the job queue and transcripts:
+- `media_assets.original_storage_key` (unique, keeps the original upload
+  after remux) and `processed_at`;
+- `processing_jobs` (remux/transcription; one active job per asset and type
+  through a partial unique index; claims use `FOR UPDATE SKIP LOCKED`,
+  leases and an attempt fencing token);
+- `transcripts` (one per media asset, ASR engine/model provenance) and
+  `transcript_segments` (`(transcript_id, sequence)` key, recording-relative
+  seconds, nullable confidence). Deleting a meeting or asset cascades.
+
+See `docs/server-processing.md`.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to

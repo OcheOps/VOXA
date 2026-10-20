@@ -39,3 +39,18 @@ func TestMediaRepositoryContract(t *testing.T) {
 		return memory.NewMediaRepository()
 	})
 }
+
+func memoryProcessingFixture(*testing.T) repositorytest.ProcessingFixture {
+	return repositorytest.ProcessingFixture{
+		Jobs: memory.NewJobRepository(), Transcripts: memory.NewTranscriptRepository(),
+		AssetA1: "med_a1", AssetA2: "med_a2", AssetB: "med_b",
+	}
+}
+
+func TestJobRepositoryContract(t *testing.T) {
+	repositorytest.JobRepositoryContract(t, memoryProcessingFixture)
+}
+
+func TestTranscriptRepositoryContract(t *testing.T) {
+	repositorytest.TranscriptRepositoryContract(t, memoryProcessingFixture)
+}
