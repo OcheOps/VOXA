@@ -27,6 +27,9 @@ const SPEECH = process.env.VOXA_E2E_SPEECH;
 const enabled = Boolean(SERVER_BIN && chromeBinary() && Bun.which('ffmpeg'));
 const withWhisper = Boolean(WHISPER_BIN && WHISPER_MODEL && SPEECH);
 const LONG_SECONDS = Number(process.env.VOXA_E2E_LONG_SECONDS ?? 40);
+/** Opt-in endurance run (minutes) at the production 15 s timeslice. */
+const ENDURANCE_MINUTES = Number(process.env.VOXA_E2E_ENDURANCE_MINUTES ?? 0);
+const SUMMARY_SECRET = 'sk-capture-e2e-summary-0001';
 const TIMESLICE_MS = 500;
 const MEETING_TITLE = 'VoxaMeetingFixture';
 const RATE = 48_000;
@@ -35,6 +38,7 @@ const TAB_HZ = 1000;
 
 let pagesServer: ReturnType<typeof Bun.serve>;
 let voxa: Subprocess | undefined;
+let llm: ReturnType<typeof Bun.serve>;
 let chrome: ChromePage;
 let apiUrl = '';
 let pageUrl = '';
@@ -121,10 +125,11 @@ async function serverContent(assetId: string): Promise<Uint8Array> {
   return new Uint8Array(await (await fetch(`${apiUrl}/api/v1/media/${assetId}/content`)).arrayBuffer());
 }
 
-async function openHarness(synthetic?: { micHz: number; micAmplitude: number; tabHz: number; tabAmplitude: number }) {
+async function openHarness(synthetic?: { micHz: number; micAmplitude: number; tabHz: number; tabAmplitude: number }, options: { timesliceMs?: number; keepCopies?: boolean } = {}) {
   await chrome.send('Page.navigate', { url: pageUrl });
   await waitFor('harness', 10_000, () => chrome.evaluate<boolean>('typeof window.harness === "object"').catch(() => false));
-  return chrome.evaluate<{ mimeType: string }>(`harness.setup(${JSON.stringify(apiUrl)}, ${TIMESLICE_MS}${synthetic ? `, ${JSON.stringify(synthetic)}` : ''})`);
+  const args = [JSON.stringify(apiUrl), options.timesliceMs ?? TIMESLICE_MS, synthetic ? JSON.stringify(synthetic) : 'undefined', JSON.stringify({ keepCopies: options.keepCopies ?? true })];
+  return chrome.evaluate<{ mimeType: string }>(`harness.setup(${args.join(', ')})`);
 }
 
 async function record(mode: string, title: string, seconds: number, during?: (elapsed: number) => Promise<void>) {
@@ -148,8 +153,8 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
     // A 440 Hz tone at -10 dBFS, pulsed 0.6 s on / 0.4 s off like speech
     // bursts, stands in for the user's voice (a steady tone is treated as
     // noise and removed by the browser's microphone noise suppression).
-    const made = Bun.spawnSync(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=${MIC_HZ}:sample_rate=${RATE}:duration=600`,
-      '-af', "volume='0.3*lt(mod(t,1),0.6)':eval=frame", '-ac', '1', mic]);
+    const made = Bun.spawnSync(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=${MIC_HZ}:sample_rate=8000:duration=${Math.max(700, ENDURANCE_MINUTES * 60 + 120)}`,
+      '-af', "volume='0.3*lt(mod(t,1),0.6)':eval=frame", '-ac', '1', '-ar', '8000', mic]);
     if (made.exitCode !== 0) throw new Error(made.stderr.toString());
     const outfile = join(temp, 'harness.js');
     const build = Bun.spawnSync([process.execPath, 'build', join(import.meta.dir, 'harness-entry.ts'), '--target', 'browser', '--outfile', outfile], { cwd: join(import.meta.dir, '../..') });
@@ -174,6 +179,18 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
       VOXA_ALLOWED_ORIGINS: `http://localhost:${pagesServer.port}`, VOXA_MEDIA_DIR: join(temp, 'media'),
     };
     if (withWhisper) Object.assign(env, { VOXA_WHISPER_BIN: WHISPER_BIN!, VOXA_WHISPER_MODEL: WHISPER_MODEL! });
+    // Fake local summary provider (no paid API) for the full-chain test.
+    llm = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = await request.json() as { messages: Array<{ role: string; content: string }> };
+        if (request.headers.get('authorization') !== `Bearer ${SUMMARY_SECRET}`) return Response.json({ error: 'bad key' }, { status: 401 });
+        const user = body.messages.find((m) => m.role === 'user')?.content.toLowerCase() ?? '';
+        const heard = user.includes('country') ? 'The remote speaker asked what listeners can do for their country.' : 'No speech recognized.';
+        return Response.json({ choices: [{ message: { content: `# Captured meeting\n\n**Summary**\n\n${heard}` } }] });
+      },
+    });
+    Object.assign(env, { VOXA_SUMMARY_PROVIDERS: 'custom-openai', VOXA_CUSTOM_OPENAI_URL: `http://127.0.0.1:${llm.port}/v1` });
     voxa = Bun.spawn([SERVER_BIN!], { env, stdout: 'ignore', stderr: 'ignore' });
     await waitHttp(`${apiUrl}/readyz`);
     chrome = await launchChrome(join(temp, 'chrome'), {
@@ -188,6 +205,7 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
     chrome?.close();
     voxa?.kill();
     pagesServer?.stop(true);
+    llm?.stop(true);
     rmSync(temp, { recursive: true, force: true });
   });
 
@@ -223,6 +241,25 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
     expect(after.mic).toBeGreaterThan(0.45);
     expect(after.mic).toBeLessThan(0.55);
     expect(after.tab).toBeLessThan(0.01);
+  }, 60_000);
+
+  test('deterministic: when the microphone ends, recording continues with the tab and warns', async () => {
+    await openHarness({ micHz: MIC_HZ, micAmplitude: 0.4, tabHz: TAB_HZ, tabAmplitude: 0.4 });
+    let ended = false;
+    const { state, mediaAssetId } = await record('microphone+shared', 'Mic lost', 5, async (elapsed) => {
+      if (!ended && elapsed >= 2.5) {
+        ended = true;
+        await chrome.evaluate('harness.endSynthetic(1)'); // stream 1 is the microphone
+      }
+    });
+    expect(state.warning).toBe('Your microphone stopped. Recording continues with the shared audio only.');
+    expect(state.capture).toEqual({ mode: 'microphone+shared', microphone: false, shared: { surface: 'unknown' } });
+    const diagnostics = await chrome.evaluate<Array<{ type: string; detail?: Record<string, unknown> }>>('harness.diagnostics()');
+    expect(diagnostics.map((d) => d.type)).toContain('fallback');
+    const result = analyze(decode(await serverContent(mediaAssetId)));
+    expect(median(result.mic.slice(1, 4))).toBeGreaterThan(0.3);
+    expect(median(result.mic.slice(-3))).toBeLessThan(0.01);
+    expect(median(result.tab.slice(-3))).toBeGreaterThan(0.3);
   }, 60_000);
 
   test('deterministic nominal levels pass through unchanged', async () => {
@@ -289,6 +326,11 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
   // always carry an audio track. Those paths are covered with fakes in
   // tests/recording/browser-capture.test.ts.
 
+  test('pending chunk store reads rows written by older builds (Blob) and new rows (ArrayBuffer)', async () => {
+    await openHarness();
+    expect(await chrome.evaluate<Record<string, string>>('harness.legacyChunkRoundTrip()')).toEqual({ legacy: 'legacy-bytes', legacyType: 'audio/webm', current: 'new-bytes', currentType: 'audio/webm' });
+  }, 30_000);
+
   test('mixed recording survives a network drop and a reload (IndexedDB recovery)', async () => {
     const meetingTab = await chrome.openTab(`${pageUrl}meeting?kind=tone&gain=0.3`);
     await Bun.sleep(800);
@@ -311,6 +353,9 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
     const result = analyze(decode(stored));
     expect(present(result.mic)).toBeGreaterThan(0);
     expect(present(result.tab, 0.004)).toBeGreaterThan(0);
+    // Provenance was stored at creation and survives the reload and recovery.
+    const media = (await (await fetch(`${apiUrl}/api/v1/meetings/${meetingId}/media`)).json()).items;
+    expect(media[0].capture).toEqual({ mode: 'microphone_and_shared_audio', client: 'web', sharedSurface: 'browser' });
     await chrome.closeTab(meetingTab);
   }, 60_000);
 
@@ -338,6 +383,128 @@ describe.skipIf(!enabled)('browser meeting capture (real tab capture + fake micr
     expect(present(result.tab, 0.004)).toBeGreaterThanOrEqual(result.tab.length - 6);
     expect(present(mic)).toBeGreaterThanOrEqual(mic.length - 2);
   }, (LONG_SECONDS + 60) * 1000);
+
+  test.skipIf(!withWhisper)('mixed capture → offline → restored → reload → recovery → finalize → remux → transcript → summary', async () => {
+    expect((await fetch(`${apiUrl}/api/v1/credentials/custom-openai`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: SUMMARY_SECRET }) })).status).toBe(200);
+    expect((await fetch(`${apiUrl}/api/v1/configuration`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary: { provider: 'custom-openai', model: 'fake-llm', autoGenerate: true } }) })).status).toBe(200);
+    const meetingTab = await chrome.openTab(`${pageUrl}meeting?kind=speech&gain=1`);
+    await Bun.sleep(800);
+    await openHarness();
+    const meetingId = await chrome.evaluate<string>(`harness.createMeeting('Full chain')`);
+    const started = await chrome.evaluate<{ mediaAssetId: string; phase: string }>(`harness.start(${JSON.stringify(meetingId)}, 'microphone+shared')`);
+    expect(started.phase).toBe('recording');
+    const id = JSON.stringify(started.mediaAssetId);
+    await Bun.sleep(4000);
+    // Network loss: chunks accumulate on the device.
+    await chrome.send('Network.setBlockedURLs', { urls: [`${apiUrl}/*`] });
+    await Bun.sleep(6000);
+    const offline = await chrome.evaluate<number>(`harness.pendingLocal(${id})`);
+    expect(offline).toBeGreaterThanOrEqual(6);
+    // Network restored: uploads resume while recording continues.
+    await chrome.send('Network.setBlockedURLs', { urls: [] });
+    await waitFor('backlog drained', 20_000, async () => (await chrome.evaluate<number>(`harness.pendingLocal(${id})`)) <= 2);
+    await Bun.sleep(4000);
+    // Reload mid-recording; the recording is recovered from IndexedDB and finalized.
+    await openHarness();
+    expect(await chrome.evaluate<string[]>('harness.recover()')).toContain(started.mediaAssetId);
+    const job = await chrome.evaluate<{ recovered: boolean; uploadedChunks: number }>(`harness.waitFor(${id}, 'ready', 30000)`);
+    expect(job.recovered).toBe(true);
+    await chrome.closeTab(meetingTab);
+
+    const transcript = await waitFor('transcript', 180_000, async () => {
+      const response = await (await fetch(`${apiUrl}/api/v1/media/${started.mediaAssetId}/transcript`)).json();
+      if (response.state === 'failed') throw new Error(JSON.stringify(response.error));
+      return response.state === 'ready' && response.transcript;
+    });
+    const text = transcript.segments.map((s: { text: string }) => s.text).join(' ').toLowerCase();
+    console.log(`full chain transcript: ${text}`);
+    expect(text).toContain('country');
+    const summary = await waitFor('summary', 60_000, async () => {
+      const response = await (await fetch(`${apiUrl}/api/v1/meetings/${meetingId}/summary`)).json();
+      if (response.state === 'failed') throw new Error(JSON.stringify(response.error));
+      return response.state === 'ready' && response.summary;
+    });
+    expect(summary.content.markdown).toContain('asked what listeners can do for their country');
+    expect(summary.transcriptId).toBe(transcript.id);
+    // Both sources are in the final media: remote speech (transcript) and the local microphone tone.
+    const media = (await (await fetch(`${apiUrl}/api/v1/meetings/${meetingId}/media`)).json()).items[0];
+    expect(media.capture).toEqual({ mode: 'microphone_and_shared_audio', client: 'web', sharedSurface: 'browser' });
+    expect(media.durationSeconds).toBeGreaterThan(12);
+    const result = analyze(decode(await serverContent(started.mediaAssetId)));
+    expect(present(perSecond(result.mic))).toBeGreaterThan(perSecond(result.mic).length / 2);
+  }, 300_000);
+
+  test.skipIf(!ENDURANCE_MINUTES)('endurance: long mixed capture at the production timeslice', async () => {
+    const meetingTab = await chrome.openTab(`${pageUrl}meeting?kind=tone&gain=0.3`);
+    await Bun.sleep(800);
+    await openHarness(undefined, { timesliceMs: 15_000, keepCopies: false });
+    await chrome.send('Performance.enable');
+    const cpuSample = async () => {
+      const metrics = (await chrome.send('Performance.getMetrics')).result.metrics as Array<{ name: string; value: number }>;
+      return metrics.find((m) => m.name === 'TaskDuration')?.value ?? 0;
+    };
+    const samples: Array<{ t: number; heap: number | null; storage: number | null; pending: number; contextStates: string[] }> = [];
+    let lastSample = -60;
+    const cpuStart = await cpuSample();
+    const seconds = ENDURANCE_MINUTES * 60;
+    let mediaId = '';
+    const { job, mediaAssetId, state } = await record('microphone+shared', 'Endurance', seconds, async (elapsed) => {
+      if (elapsed - lastSample < 60) return;
+      lastSample = elapsed;
+      mediaId ||= (await chrome.evaluate<{ mediaAssetId: string }>('harness.state()')).mediaAssetId;
+      const sample = {
+        t: Math.round(elapsed),
+        heap: await chrome.evaluate<number | null>('harness.heapBytes()'),
+        storage: await chrome.evaluate<number | null>('harness.storageUsage()'),
+        pending: await chrome.evaluate<number>(`harness.pendingLocal(${JSON.stringify(mediaId)})`),
+        contextStates: (await chrome.evaluate<Array<{ type: string; detail?: { state?: string } }>>('harness.diagnostics()'))
+          .filter((d) => d.type === 'audio-context').map((d) => String(d.detail?.state)),
+      };
+      samples.push(sample);
+      console.log(`endurance sample: ${JSON.stringify(sample)}`);
+    });
+    console.log('endurance: recording stopped and finalized');
+    const cpuSeconds = (await cpuSample()) - cpuStart;
+    // Storage after the recording finished uploading: the store keeps no chunks.
+    await Bun.sleep(5000);
+    const storageAfter = await chrome.evaluate<number | null>('harness.storageUsage()');
+    const pendingAfter = await chrome.evaluate<number>(`harness.pendingLocal(${JSON.stringify(mediaAssetId)})`);
+    const times = await chrome.evaluate<number[]>('harness.chunkTimes()');
+    const gaps = times.slice(1).map((t, i) => (t - times[i]) / 1000);
+    const detailsAfter = await chrome.evaluate<unknown>('harness.storageDetails()');
+    const inventory = await chrome.evaluate<unknown>('harness.idbInventory()');
+    // A fresh page holds no Blob references from the recording.
+    await openHarness(undefined, { timesliceMs: 15_000, keepCopies: false });
+    await Bun.sleep(5000);
+    const storageAfterReload = await chrome.evaluate<number | null>('harness.storageUsage()');
+    console.log(`endurance storage: after ${storageAfter} details ${JSON.stringify(detailsAfter)} inventory ${JSON.stringify(inventory)} after reload ${storageAfterReload}`);
+    await chrome.closeTab(meetingTab);
+    const result = analyze(decode(await serverContent(mediaAssetId)));
+    const report = {
+      minutes: ENDURANCE_MINUTES, chunks: job.uploadedChunks, gapMin: Math.min(...gaps), gapMax: Math.max(...gaps),
+      heapMb: samples.map((s) => s.heap && +(s.heap / 1048576).toFixed(1)), storageMb: samples.map((s) => s.storage && +(s.storage / 1048576).toFixed(2)),
+      maxPendingChunks: Math.max(...samples.map((s) => s.pending)), contextStates: [...new Set(samples.flatMap((s) => s.contextStates))],
+      rendererCpuPercent: +((cpuSeconds / seconds) * 100).toFixed(2), decodedSeconds: +result.seconds.toFixed(1), warning: state.warning,
+      storageAfterMb: storageAfter && +(storageAfter / 1048576).toFixed(2), pendingAfter,
+      micPresentSeconds: present(perSecond(result.mic)), tabPresentWindows: present(result.tab, 0.004), windows: result.tab.length,
+    };
+    console.log(`endurance: ${JSON.stringify(report)}`);
+    await Bun.write(join(workRoot, 'endurance-report.json'), JSON.stringify(report, null, 2));
+    expect(job.uploadedChunks).toBeGreaterThanOrEqual(Math.floor(seconds / 15));
+    expect(report.gapMax).toBeLessThan(16.5);
+    expect(report.contextStates).toEqual(['running']);
+    expect(report.maxPendingChunks).toBeLessThanOrEqual(2);
+    expect(pendingAfter).toBe(0);
+    // Regression: uploaded chunks must not keep IndexedDB storage (Blob
+    // values read back leaked ~0.7 MB per minute in Chromium).
+    if (ENDURANCE_MINUTES >= 10) expect(storageAfter ?? 0).toBeLessThan(6 * 1048576);
+    expect(result.seconds).toBeGreaterThan(seconds - 20);
+    expect(report.micPresentSeconds).toBeGreaterThan(perSecond(result.mic).length * 0.9);
+    expect(report.tabPresentWindows).toBeGreaterThan(result.tab.length * 0.8);
+    const heaps = samples.map((s) => s.heap ?? 0).filter(Boolean);
+    expect(Math.max(...heaps) - Math.min(...heaps)).toBeLessThan(30 * 1048576);
+  }, (ENDURANCE_MINUTES * 60 + 300) * 1000);
 
   test.skipIf(!withWhisper)('speech in the meeting tab reaches remux and the transcript', async () => {
     const meetingTab = await chrome.openTab(`${pageUrl}meeting?kind=speech&gain=1`);

@@ -28,8 +28,34 @@ them (`BrowserRecordingClient.browserCapture`):
 - `mixing`: `AudioContext` with `createMediaStreamDestination`;
 - `sharedAudio`: `likely` when the browser advertises display-audio
   constraints (`suppressLocalAudioPlayback`/`restrictOwnAudio`, Chromium),
-  `unknown` otherwise (the UI then says the browser may share video
-  without audio), `unavailable` without getDisplayMedia.
+  `unknown` otherwise (the UI says “Your browser may not provide shared tab
+  audio. Voxa will verify after you choose a source.”), `unavailable`
+  without getDisplayMedia.
+
+When the shared source has no audio, the message names what was shared (a
+tab without “Share tab audio”, or a window/screen whose audio the browser
+did not include).
+
+## Capture provenance and diagnostics
+
+Each recording session stores how it was captured when it started
+(migration `0007_capture_provenance.sql`): `mode` (`microphone`,
+`shared_audio`, `microphone_and_shared_audio`, `unknown`), `client` (`web`,
+`desktop`, `extension`, `android`, `unknown`) and, for shared audio, the
+`sharedSurface` kind (`browser`, `window`, `monitor`). No user agent, URL,
+tab title or provider data is stored. Recordings made before this, or by
+clients that do not report it, read as `unknown` and show no label. The
+meeting page shows a subtle label per recording (“Microphone”, “Meeting
+tab + microphone”, “Meeting tab”, or “Shared screen/window …”).
+
+The browser keeps up to 200 local capture diagnostics (track started/ended,
+AudioContext state, recorder started/stopped, fallback to the remaining
+source, capture failures with a reason code). They contain no media,
+transcript text, URLs or titles and are not sent anywhere; run
+`voxaCaptureDiagnostics()` in the browser console to read them.
+
+Compatibility status and the manual validation matrix:
+`docs/browser-capture-compatibility.md`.
 
 Whether a shared source really has audio is only known after the user
 picks it; Voxa inspects the returned tracks and refuses to start with a
@@ -92,16 +118,16 @@ it.
 
 ## 4. Provider-specific user instructions
 
-The recorder shows these tips (static guidance; Voxa cannot see which site
-the shared tab shows, and nothing is sent to or read from the provider):
-
-| App | Where | Tip |
-|---|---|---|
-| Google Meet | meet.google.com | Join in a tab; choose the Meet tab with “Share tab audio”. |
-| Microsoft Teams | teams.microsoft.com, teams.live.com | Use Teams in the browser, not the desktop app; share the Teams tab with audio. |
-| Zoom | app.zoom.us, zoom.us/wc | “Join from your browser”; share that tab with audio. Zoom desktop calls are not capturable. |
-| Cisco Webex | web.webex.com, *.webex.com | Join with the Webex web app; share its tab with audio. |
-| WhatsApp Web | web.whatsapp.com | Only audio played inside the WhatsApp Web tab is capturable; calls that open in the desktop or phone app are not. |
+The recorder shows one tip per app (static guidance; Voxa cannot see which
+site the shared tab shows, and nothing is sent to or read from the
+provider). Tips describe only the verified mechanism: “Join the call in a
+browser tab, then choose the <app> tab in the share dialog and turn on
+‘Share tab audio’”, for Google Meet (meet.google.com), Teams
+(teams.microsoft.com, teams.live.com), Zoom (app.zoom.us), Webex
+(web.webex.com) and WhatsApp Web (web.whatsapp.com). A note says that only
+audio playing inside the shared tab is recorded, that desktop or phone
+apps cannot be captured here, and that live calls in each app have not
+been validated yet.
 
 ## 5. Browser limitations (tested behaviour)
 

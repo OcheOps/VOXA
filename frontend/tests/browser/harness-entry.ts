@@ -69,12 +69,16 @@ function syntheticDevices(synthetic: Synthetic) {
 }
 
 let coordinator: RecordingUploadCoordinator;
+let keepCopies = true;
+const chunkTimes: number[] = [];
 let session: RecordingSessionController;
 let recorder: BrowserRecordingClient;
 let apiUrl = '';
 
 (window as any).harness = {
-  setup(api: string, timesliceMs: number, synthetic?: Synthetic) {
+  setup(api: string, timesliceMs: number, synthetic?: Synthetic, options: { keepCopies?: boolean } = {}) {
+    keepCopies = options.keepCopies ?? true;
+    chunkTimes.length = 0;
     apiUrl = api;
     const transport = new HttpTransport({ baseUrl: api, getAccessToken: () => null });
     const media = new HttpMediaClient(transport, api);
@@ -87,6 +91,8 @@ let apiUrl = '';
     const env = defaultBrowserEnvironment();
     recorder = new BrowserRecordingClient({ ...env, ...(synthetic ? { mediaDevices: syntheticDevices(synthetic) as never } : {}), timesliceMs });
     recorder.onChunk((chunk) => {
+      chunkTimes.push(performance.now());
+      if (!keepCopies) return;
       const id = session.getState().mediaAssetId ?? (coordinator.getJobs().at(-1)?.mediaAssetId ?? '');
       void keepCopy(id, chunk.index, chunk.data);
     });
@@ -102,6 +108,44 @@ let apiUrl = '';
     return session.getState();
   },
   state() { return session.getState(); },
+  diagnostics() { return recorder.getDiagnostics(); },
+  chunkTimes() { return [...chunkTimes]; },
+  async storageUsage() { return (await navigator.storage?.estimate?.())?.usage ?? null; },
+  /** A chunk row written by an older build (Blob value) is still readable. */
+  async legacyChunkRoundTrip() {
+    const store = new IndexedDbPendingStore(indexedDB);
+    await store.listRecordings(); // opens/creates the database
+    const db = await new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open('voxa-recordings'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('chunks', 'readwrite');
+      tx.objectStore('chunks').put({ mediaAssetId: 'med_legacy', index: 0, data: new Blob(['legacy-bytes'], { type: 'audio/webm' }) });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    const legacy = await store.getChunk('med_legacy', 0);
+    await store.putChunk('med_new', 0, new Blob(['new-bytes'], { type: 'audio/webm' }));
+    const current = await store.getChunk('med_new', 0);
+    const result = { legacy: await legacy?.text(), legacyType: legacy?.type, current: await current?.text(), currentType: current?.type };
+    await store.deleteChunk('med_legacy', 0);
+    await store.deleteChunk('med_new', 0);
+    return result;
+  },
+  /** Databases, stores and record counts (no contents). */
+  async idbInventory() {
+    const out: Record<string, Record<string, number>> = {};
+    for (const info of await indexedDB.databases()) {
+      if (!info.name) continue;
+      const db = await new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open(info.name!); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
+      out[info.name] = {};
+      for (const store of Array.from(db.objectStoreNames)) {
+        out[info.name][store] = await new Promise<number>((resolve) => { const r = db.transaction(store).objectStore(store).count(); r.onsuccess = () => resolve(r.result); });
+      }
+      db.close();
+    }
+    return out;
+  },
+  async storageDetails() { return ((await navigator.storage?.estimate?.()) as { usageDetails?: unknown } | undefined)?.usageDetails ?? null; },
   /** Simulates the browser ending a synthetic source (e.g. "Stop sharing"). */
   endSynthetic(index: number) { syntheticTracks[index]?.dispatchEvent(new Event('ended')); },
   browserCapture() { return recorder.browserCapture; },

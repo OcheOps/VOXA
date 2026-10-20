@@ -1,4 +1,4 @@
-import type { ServerMediaAsset, ServerMediaClient } from '@/clients/contracts';
+import type { RecordingCaptureProvenance, ServerMediaAsset, ServerMediaClient } from '@/clients/contracts';
 import { VoxaApiError, VoxaTransportError } from '@/clients/http/transport';
 import type { PendingChunkStore, PendingRecording } from './pending-store';
 
@@ -286,8 +286,10 @@ export class RecordingUploadCoordinator {
   }
 
   /** Creates the server recording and local record; requires connectivity. */
-  async begin(meetingId: string, mimeType: string): Promise<{ mediaAssetId: string; maxChunkBytes: number }> {
-    const target = await this.options.media.createRecording(meetingId, mimeType);
+  async begin(meetingId: string, mimeType: string, capture?: RecordingCaptureProvenance): Promise<{ mediaAssetId: string; maxChunkBytes: number }> {
+    // Provenance is stored with the server recording session at creation;
+    // recovery never recreates it, so it survives reloads unchanged.
+    const target = await this.options.media.createRecording(meetingId, mimeType, capture);
     const now = this.options.now();
     const record: PendingRecording = {
       mediaAssetId: target.asset.id, meetingId, mimeType: target.asset.mimeType, state: 'recording',
@@ -366,7 +368,7 @@ export class RecordingUploadCoordinator {
           await this.options.store.deleteRecording(record.mediaAssetId);
           job.release?.();
           job.release = null;
-          job.update({ asset: { id: record.mediaAssetId, meetingId: record.meetingId, mimeType: record.mimeType, status: 'ready', durationSeconds: record.durationSeconds, sizeBytes: status.receivedBytes, createdAt: '', updatedAt: '' } });
+          job.update({ asset: { id: record.mediaAssetId, meetingId: record.meetingId, mimeType: record.mimeType, status: 'ready', durationSeconds: record.durationSeconds, sizeBytes: status.receivedBytes, createdAt: '', updatedAt: '', capture: null } });
           continue;
         }
         // Chunks the server already holds need not be sent again.

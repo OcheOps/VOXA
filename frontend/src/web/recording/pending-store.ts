@@ -69,7 +69,14 @@ function completed(transaction: IDBTransaction): Promise<void> {
 /**
  * IndexedDB-backed store. Writes resolve only after the transaction has
  * committed. Stores: `recordings` (keyed by mediaAssetId) and `chunks`
- * (keyed by [mediaAssetId, index], value holds the Blob).
+ * (keyed by [mediaAssetId, index]).
+ *
+ * Chunk bytes are stored as an ArrayBuffer (`bytes`, plus `type`), not as a
+ * Blob. In Chromium, a Blob value that has been read back from IndexedDB
+ * keeps its backing file after the record is deleted, so uploading
+ * Blob-valued chunks leaked about 0.7 MB of origin storage per recorded
+ * minute (measured in the 30-minute endurance test); ArrayBuffer values are
+ * reclaimed. Rows written by older builds (`data: Blob`) are still read.
  */
 export class IndexedDbPendingStore implements PendingChunkStore {
   readonly durable = true;
@@ -126,13 +133,17 @@ export class IndexedDbPendingStore implements PendingChunkStore {
   }
 
   async putChunk(id: string, index: number, data: Blob) {
-    await this.write(['chunks'], (tx) => tx.objectStore('chunks').put({ mediaAssetId: id, index, data }));
+    // Read before the transaction: IndexedDB transactions cannot span awaits.
+    const bytes = await data.arrayBuffer();
+    await this.write(['chunks'], (tx) => tx.objectStore('chunks').put({ mediaAssetId: id, index, bytes, type: data.type }));
   }
 
   async getChunk(id: string, index: number) {
     const tx = (await this.db()).transaction('chunks', 'readonly');
-    const row = (await promisify(tx.objectStore('chunks').get([id, index]))) as { data: Blob } | undefined;
-    return row?.data ?? null;
+    const row = (await promisify(tx.objectStore('chunks').get([id, index]))) as { bytes?: ArrayBuffer; type?: string; data?: Blob } | undefined;
+    if (!row) return null;
+    if (row.bytes) return new Blob([row.bytes], { type: row.type ?? '' });
+    return row.data ?? null; // written by an older build
   }
 
   async listChunkIndexes(id: string) {

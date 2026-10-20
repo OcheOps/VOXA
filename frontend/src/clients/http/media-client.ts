@@ -1,4 +1,5 @@
 import type {
+  CreateRecordingRequest,
   CreateRecordingResponse,
   FinalizeMediaRequest,
   MediaAsset,
@@ -8,6 +9,7 @@ import type {
   MeetingMediaResponse,
 } from '@voxa/protocol';
 import type {
+  RecordingCaptureProvenance,
   MediaCapabilities,
   MediaClient,
   MediaImportSelection,
@@ -26,6 +28,7 @@ function toAsset(asset: MediaAsset): ServerMediaAsset {
   return {
     id: asset.id, meetingId: asset.meetingId, mimeType: asset.mimeType, status: asset.status,
     durationSeconds: asset.durationSeconds, sizeBytes: asset.sizeBytes, createdAt: asset.createdAt, updatedAt: asset.updatedAt,
+    capture: asset.capture ?? null,
   };
 }
 
@@ -58,8 +61,9 @@ export class HttpMediaClient implements MediaClient, ServerMediaClient {
 
   constructor(private readonly transport: HttpTransport, private readonly apiBaseUrl: string) {}
 
-  async createRecording(meetingId: string, mimeType: string): Promise<RecordingUploadTarget> {
-    const response = await this.transport.post<CreateRecordingResponse>(`/api/v1/meetings/${encodeURIComponent(meetingId)}/recordings`, { mimeType });
+  async createRecording(meetingId: string, mimeType: string, capture?: RecordingCaptureProvenance): Promise<RecordingUploadTarget> {
+    const body: CreateRecordingRequest = capture ? { mimeType, capture } : { mimeType };
+    const response = await this.transport.post<CreateRecordingResponse>(`/api/v1/meetings/${encodeURIComponent(meetingId)}/recordings`, body);
     return {
       asset: toAsset(response.mediaAsset),
       recordingSessionId: response.recordingSession.id,

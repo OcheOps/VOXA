@@ -54,7 +54,10 @@ export async function launchChrome(userDataDir: string, options: { args?: string
   return {
     send,
     async evaluate<T>(expression: string) {
-      const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
+      const response = await Promise.race([
+        send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`evaluate timed out: ${expression.slice(0, 80)}`)), 120_000)),
+      ]);
       if (response.result?.exceptionDetails) {
         throw new Error(`page error: ${JSON.stringify(response.result.exceptionDetails.exception?.description ?? response.result.exceptionDetails).slice(0, 800)}`);
       }

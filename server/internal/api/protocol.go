@@ -71,6 +71,49 @@ type mediaAssetDTO struct {
 	SizeBytes          int64    `json:"sizeBytes"`
 	CreatedAt          string   `json:"createdAt"`
 	UpdatedAt          string   `json:"updatedAt"`
+	// Capture is the provenance of the asset's recording session (additive;
+	// null when the asset has no session).
+	Capture *captureDTO `json:"capture"`
+}
+
+// captureDTO is operational capture provenance; it never includes a user
+// agent, URL, tab title or provider data.
+type captureDTO struct {
+	Mode          string  `json:"mode"`
+	Client        string  `json:"client"`
+	SharedSurface *string `json:"sharedSurface"`
+}
+
+func captureFromDomain(c domain.CaptureProvenance) *captureDTO {
+	return &captureDTO{Mode: string(c.Mode), Client: string(c.Client), SharedSurface: c.SharedSurface}
+}
+
+// captureInput is the optional provenance a client reports when it starts a
+// recording; omitted fields are stored as unknown.
+type captureInput struct {
+	Mode          string  `json:"mode"`
+	Client        string  `json:"client"`
+	SharedSurface *string `json:"sharedSurface"`
+}
+
+func (c *captureInput) toDomain() domain.CaptureProvenance {
+	if c == nil {
+		return domain.UnknownCapture()
+	}
+	return domain.CaptureProvenance{Mode: domain.CaptureMode(c.Mode), Client: domain.CaptureClient(c.Client), SharedSurface: c.SharedSurface}
+}
+
+// withCapture attaches the session provenance to an asset DTO.
+func withCapture(dto mediaAssetDTO, a domain.MediaAsset, captures map[domain.RecordingSessionID]domain.CaptureProvenance) mediaAssetDTO {
+	if a.RecordingSessionID == nil {
+		return dto
+	}
+	capture, ok := captures[*a.RecordingSessionID]
+	if !ok {
+		capture = domain.UnknownCapture()
+	}
+	dto.Capture = captureFromDomain(capture)
+	return dto
 }
 
 // mediaAssetFromDomain never includes the internal storage key.
@@ -93,11 +136,13 @@ type recordingSessionDTO struct {
 	StartedAt   string  `json:"startedAt"`
 	EndedAt     *string `json:"endedAt"`
 	CreatedAt   string  `json:"createdAt"`
+	// Capture is additive; older servers omitted it.
+	Capture *captureDTO `json:"capture"`
 }
 
 func recordingSessionFromDomain(s domain.RecordingSession) recordingSessionDTO {
 	dto := recordingSessionDTO{ID: string(s.ID), WorkspaceID: string(s.WorkspaceID), MeetingID: string(s.MeetingID), Status: string(s.Status),
-		StartedAt: s.StartedAt.UTC().Format(time.RFC3339Nano), CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano)}
+		StartedAt: s.StartedAt.UTC().Format(time.RFC3339Nano), CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano), Capture: captureFromDomain(s.Capture)}
 	if s.EndedAt != nil {
 		ended := s.EndedAt.UTC().Format(time.RFC3339Nano)
 		dto.EndedAt = &ended
@@ -114,7 +159,8 @@ type mediaUploadDTO struct {
 	MaxTotalBytes  int64  `json:"maxTotalBytes"`
 }
 type createRecordingRequest struct {
-	MimeType string `json:"mimeType"`
+	MimeType string        `json:"mimeType"`
+	Capture  *captureInput `json:"capture"`
 }
 type createRecordingResponse struct {
 	RecordingSession recordingSessionDTO `json:"recordingSession"`

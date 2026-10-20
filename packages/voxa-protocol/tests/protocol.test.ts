@@ -21,6 +21,8 @@ import {
   type CreateRecordingResponse,
   type MediaTranscriptResponse,
   type MeetingSummaryResponse,
+  type CaptureProvenance,
+  type CreateRecordingRequest,
   type GenerateSummaryRequest,
   type SummaryMarkdownContent,
   WORKSPACE_SELECTION_REQUIRED,
@@ -226,6 +228,18 @@ describe('processing protocol', () => {
     expect(JSON.parse(JSON.stringify(response))).toEqual(response);
     const pending: MediaTranscriptResponse = { mediaAssetId: mediaAssetId('med_1'), state: 'transcribing', error: null, transcript: null };
     expect(pending.transcript).toBeNull();
+  });
+
+  test('capture provenance is additive and carries no tracking data', () => {
+    const request: CreateRecordingRequest = { mimeType: 'audio/webm;codecs=opus', capture: { mode: 'microphone_and_shared_audio', client: 'web', sharedSurface: 'browser' } };
+    const legacy: CreateRecordingRequest = { mimeType: 'audio/webm' };
+    const provenance: CaptureProvenance = { mode: 'unknown', client: 'unknown', sharedSurface: null };
+    expect(JSON.parse(JSON.stringify(request))).toEqual(request);
+    expect(legacy.capture).toBeUndefined();
+    expect(Object.keys(provenance).sort()).toEqual(['client', 'mode', 'sharedSurface']);
+    // @ts-expect-error Provenance never includes a meeting URL or tab title.
+    const unsafe: CaptureProvenance = { mode: 'microphone', client: 'web', sharedSurface: null, tabTitle: 'Weekly sync' };
+    void unsafe;
   });
 
   test('summary state carries provenance, staleness and structured content without provider secrets', () => {

@@ -511,6 +511,13 @@ export interface ConfigurationClient {
 /** Server-stored media (web). Capture itself stays in RecordingClient. */
 export type ServerMediaStatus = 'uploading' | 'ready' | 'failed';
 
+/** How a stored recording was captured (diagnostics; no URLs, titles or user agent). */
+export interface RecordingCaptureProvenance {
+  mode: 'microphone' | 'shared_audio' | 'microphone_and_shared_audio' | 'unknown';
+  client: 'web' | 'desktop' | 'extension' | 'android' | 'unknown';
+  sharedSurface: 'browser' | 'window' | 'monitor' | 'unknown' | null;
+}
+
 export interface ServerMediaAsset {
   id: string;
   meetingId: string;
@@ -520,6 +527,8 @@ export interface ServerMediaAsset {
   sizeBytes: number;
   createdAt: string;
   updatedAt: string;
+  /** Null when the server predates capture provenance. */
+  capture: RecordingCaptureProvenance | null;
 }
 
 export interface RecordingUploadTarget {
@@ -546,7 +555,7 @@ export interface PlaybackUrl {
  * safe and finalization requires exactly chunks 0..n-1.
  */
 export interface ServerMediaClient {
-  createRecording(meetingId: string, mimeType: string): Promise<RecordingUploadTarget>;
+  createRecording(meetingId: string, mimeType: string, capture?: RecordingCaptureProvenance): Promise<RecordingUploadTarget>;
   uploadChunk(mediaAssetId: string, index: number, data: Blob, signal?: AbortSignal): Promise<UploadProgress>;
   getUploadStatus(mediaAssetId: string): Promise<UploadProgress>;
   finalize(mediaAssetId: string, chunkCount: number, durationSeconds: number | null): Promise<ServerMediaAsset>;

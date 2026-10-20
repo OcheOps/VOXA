@@ -32,6 +32,38 @@ func recording(workspaceID domain.WorkspaceID, meetingID domain.MeetingID, n int
 func MediaRepositoryContract(t *testing.T, newRepository func(t *testing.T) repository.MediaRepository) {
 	ctx := context.Background()
 
+	t.Run("capture provenance round-trips; zero value is unknown; sessions are workspace scoped", func(t *testing.T) {
+		repo := newRepository(t)
+		shared, a1 := recording(WorkspaceA, MeetingA, 1, baseTime)
+		surface := "browser"
+		shared.Capture = domain.CaptureProvenance{Mode: domain.CaptureMicrophoneAndSharedAudio, Client: domain.CaptureClientWeb, SharedSurface: &surface}
+		legacy, a2 := recording(WorkspaceA, MeetingA, 2, baseTime.Add(time.Second))
+		other, b1 := recording(WorkspaceB, MeetingB, 3, baseTime)
+		other.Capture = domain.CaptureProvenance{Mode: domain.CaptureMicrophone, Client: domain.CaptureClientDesktop}
+		for _, pair := range []struct {
+			s domain.RecordingSession
+			a domain.MediaAsset
+		}{{shared, a1}, {legacy, a2}, {other, b1}} {
+			if err := repo.CreateRecording(ctx, pair.s, pair.a); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sessions, err := repo.ListMeetingSessions(ctx, WorkspaceA, MeetingA)
+		if err != nil || len(sessions) != 2 {
+			t.Fatalf("sessions=%v err=%v", sessions, err)
+		}
+		got := sessions[0].Capture
+		if sessions[0].ID != shared.ID || got.Mode != domain.CaptureMicrophoneAndSharedAudio || got.Client != domain.CaptureClientWeb || got.SharedSurface == nil || *got.SharedSurface != "browser" {
+			t.Fatalf("shared capture = %#v", sessions[0])
+		}
+		if sessions[1].Capture.Mode != domain.CaptureModeUnknown || sessions[1].Capture.Client != domain.CaptureClientUnknown || sessions[1].Capture.SharedSurface != nil {
+			t.Fatalf("zero-value capture = %#v", sessions[1].Capture)
+		}
+		if listed, _ := repo.ListMeetingSessions(ctx, WorkspaceB, MeetingA); len(listed) != 0 {
+			t.Fatalf("cross-workspace sessions = %v", listed)
+		}
+	})
+
 	t.Run("create, get and list scoped by workspace", func(t *testing.T) {
 		repo := newRepository(t)
 		first, a1 := recording(WorkspaceA, MeetingA, 1, baseTime)

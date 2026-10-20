@@ -11,11 +11,22 @@ export type WorkspaceRole = 'owner' | 'member';
 export type MeetingStatus = 'created' | 'recording' | 'processing' | 'ready' | 'failed';
 export interface Meeting { id: MeetingId; workspaceId: WorkspaceId; title: string; status: MeetingStatus; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
 export type RecordingSessionStatus = 'recording' | 'paused' | 'completed' | 'failed' | 'cancelled';
-export interface RecordingSession { id: RecordingSessionId; workspaceId: WorkspaceId; meetingId: MeetingId; status: RecordingSessionStatus; startedAt: IsoDateTime; endedAt: IsoDateTime | null; createdAt: IsoDateTime; }
+/** How a recording was captured when it started. `unknown`: legacy recordings or clients that do not report it. */
+export type CaptureMode = 'microphone' | 'shared_audio' | 'microphone_and_shared_audio' | 'unknown';
+export type CaptureClient = 'web' | 'desktop' | 'extension' | 'android' | 'unknown';
+/** Kind of source shared for shared audio (never a URL or title). */
+export type SharedSurface = 'browser' | 'window' | 'monitor' | 'unknown';
+/**
+ * Operational capture provenance for diagnostics. It never contains a user
+ * agent, URL, tab title or meeting-provider data.
+ */
+export interface CaptureProvenance { mode: CaptureMode; client: CaptureClient; sharedSurface: SharedSurface | null; }
+/** `capture` is additive: servers before capture provenance omit it. */
+export interface RecordingSession { id: RecordingSessionId; workspaceId: WorkspaceId; meetingId: MeetingId; status: RecordingSessionStatus; startedAt: IsoDateTime; endedAt: IsoDateTime | null; createdAt: IsoDateTime; capture?: CaptureProvenance; }
 export type MediaAssetKind = 'audio';
 /** uploading: chunks may still arrive; ready: assembled and playable; failed: abandoned. */
 export type MediaAssetStatus = 'uploading' | 'ready' | 'failed';
-export interface MediaAsset { id: MediaAssetId; workspaceId: WorkspaceId; meetingId: MeetingId; recordingSessionId: RecordingSessionId | null; kind: MediaAssetKind; mimeType: string; status: MediaAssetStatus; durationSeconds: number | null; sizeBytes: number; createdAt: IsoDateTime; updatedAt: IsoDateTime; }
+export interface MediaAsset { id: MediaAssetId; workspaceId: WorkspaceId; meetingId: MeetingId; recordingSessionId: RecordingSessionId | null; kind: MediaAssetKind; mimeType: string; status: MediaAssetStatus; durationSeconds: number | null; sizeBytes: number; createdAt: IsoDateTime; updatedAt: IsoDateTime; /** Provenance of the recording session (additive; null without a session). */ capture?: CaptureProvenance | null; }
 export type TranscriptTimingProvenance = 'asr' | 'aligned' | 'manual';
 export interface TranscriptSegment {
   id: string;

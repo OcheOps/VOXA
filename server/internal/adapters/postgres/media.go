@@ -48,10 +48,13 @@ func (r *MediaRepository) CreateRecording(ctx context.Context, session domain.Re
 		return translate("begin create recording", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	if _, err := tx.Exec(ctx, `INSERT INTO recording_sessions (id, workspace_id, meeting_id, status, started_at, ended_at, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+	capture := normalizedCapture(session.Capture)
+	if _, err := tx.Exec(ctx, `INSERT INTO recording_sessions (id, workspace_id, meeting_id, status, started_at, ended_at, created_at, updated_at,
+    capture_mode, capture_client, shared_surface)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		string(session.ID), string(session.WorkspaceID), string(session.MeetingID), string(session.Status),
-		session.StartedAt, session.EndedAt, session.CreatedAt, session.UpdatedAt); err != nil {
+		session.StartedAt, session.EndedAt, session.CreatedAt, session.UpdatedAt,
+		string(capture.Mode), string(capture.Client), capture.SharedSurface); err != nil {
 		return translate("create recording session", err)
 	}
 	var sessionID *string
@@ -243,19 +246,55 @@ func (r *MediaRepository) ListUnprocessedReady(ctx context.Context, limit int) (
 	return assets, nil
 }
 
+// normalizedCapture maps a zero value to unknown provenance.
+func normalizedCapture(capture domain.CaptureProvenance) domain.CaptureProvenance {
+	if capture.Mode == "" {
+		capture.Mode = domain.CaptureModeUnknown
+	}
+	if capture.Client == "" {
+		capture.Client = domain.CaptureClientUnknown
+	}
+	return capture
+}
+
+const sessionColumns = `id, workspace_id, meeting_id, status, started_at, ended_at, created_at, updated_at, capture_mode, capture_client, shared_surface`
+
+func scanSession(row pgx.Row) (domain.RecordingSession, error) {
+	var session domain.RecordingSession
+	var sid, ws, meeting, status, mode, client string
+	if err := row.Scan(&sid, &ws, &meeting, &status, &session.StartedAt, &session.EndedAt, &session.CreatedAt, &session.UpdatedAt,
+		&mode, &client, &session.Capture.SharedSurface); err != nil {
+		return domain.RecordingSession{}, err
+	}
+	session.ID, session.WorkspaceID, session.MeetingID, session.Status = domain.RecordingSessionID(sid), domain.WorkspaceID(ws), domain.MeetingID(meeting), domain.RecordingSessionStatus(status)
+	session.Capture.Mode, session.Capture.Client = domain.CaptureMode(mode), domain.CaptureClient(client)
+	return session, nil
+}
+
 // RecordingSession reads a session (tests and future APIs).
 func (r *MediaRepository) RecordingSession(ctx context.Context, workspaceID domain.WorkspaceID, id domain.RecordingSessionID) (domain.RecordingSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	var session domain.RecordingSession
-	var sid, ws, meeting, status string
-	err := r.pool.QueryRow(ctx, `SELECT id, workspace_id, meeting_id, status, started_at, ended_at, created_at, updated_at FROM recording_sessions WHERE workspace_id = $1 AND id = $2`,
-		string(workspaceID), string(id)).Scan(&sid, &ws, &meeting, &status, &session.StartedAt, &session.EndedAt, &session.CreatedAt, &session.UpdatedAt)
+	session, err := scanSession(r.pool.QueryRow(ctx, `SELECT `+sessionColumns+` FROM recording_sessions WHERE workspace_id = $1 AND id = $2`, string(workspaceID), string(id)))
 	if err != nil {
 		return domain.RecordingSession{}, translate("get recording session", err)
 	}
-	session.ID, session.WorkspaceID, session.MeetingID, session.Status = domain.RecordingSessionID(sid), domain.WorkspaceID(ws), domain.MeetingID(meeting), domain.RecordingSessionStatus(status)
 	return session, nil
+}
+
+func (r *MediaRepository) ListMeetingSessions(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.RecordingSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	rows, err := r.pool.Query(ctx, `SELECT `+sessionColumns+` FROM recording_sessions WHERE workspace_id = $1 AND meeting_id = $2 ORDER BY created_at, id`,
+		string(workspaceID), string(meetingID))
+	if err != nil {
+		return nil, translate("list recording sessions", err)
+	}
+	sessions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.RecordingSession, error) { return scanSession(row) })
+	if err != nil {
+		return nil, translate("list recording sessions", err)
+	}
+	return sessions, nil
 }
 
 var _ repository.MediaRepository = (*MediaRepository)(nil)

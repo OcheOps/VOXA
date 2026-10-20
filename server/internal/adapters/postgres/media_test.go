@@ -187,8 +187,13 @@ VALUES ('med_old', $1, $2, 'rec_old', 'audio', 'audio/webm', 'ready', 10, 1, 'ob
 		t.Fatal(err)
 	}
 	applied, err := postgres.Migrate(ctx, pool, migrations.Files)
-	if err != nil || len(applied) != 2 || applied[0].Version != 5 || applied[1].Version != 6 {
+	if err != nil || len(applied) != 3 || applied[0].Version != 5 || applied[2].Version != 7 {
 		t.Fatalf("applied=%#v err=%v", applied, err)
+	}
+	// Sessions recorded before capture provenance existed read as unknown.
+	if session, err := postgres.NewMediaRepository(pool).RecordingSession(ctx, repositorytest.WorkspaceA, "rec_old"); err != nil ||
+		session.Capture.Mode != domain.CaptureModeUnknown || session.Capture.Client != domain.CaptureClientUnknown || session.Capture.SharedSurface != nil {
+		t.Fatalf("legacy session = %#v err=%v", session, err)
 	}
 	// Pre-existing recordings are picked up by reconciliation.
 	unprocessed, err := postgres.NewMediaRepository(pool).ListUnprocessedReady(ctx, 10)

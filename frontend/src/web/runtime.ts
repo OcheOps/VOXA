@@ -73,5 +73,11 @@ export function createWebRuntime(dependencies: WebRuntimeDependencies): WebRunti
   const recordingSession = client.recording instanceof BrowserRecordingClient && client.recording.capabilities.microphoneCapture
     ? new RecordingSessionController(client.recording, uploads)
     : null;
+  if (client.recording instanceof BrowserRecordingClient && typeof window !== 'undefined') {
+    // Local debugging only: `voxaCaptureDiagnostics()` in the console lists
+    // recent capture events (no media, transcript text, URLs or titles).
+    const recorder = client.recording;
+    (window as unknown as { voxaCaptureDiagnostics?: () => unknown }).voxaCaptureDiagnostics = () => recorder.getDiagnostics();
+  }
   return { config, client, identity, auth, uploads, recordingSession };
 }

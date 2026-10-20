@@ -36,9 +36,33 @@ func (r *MediaRepository) CreateRecording(_ context.Context, session domain.Reco
 			return repository.ErrConflict
 		}
 	}
+	if session.Capture.Mode == "" {
+		session.Capture.Mode = domain.CaptureModeUnknown
+	}
+	if session.Capture.Client == "" {
+		session.Capture.Client = domain.CaptureClientUnknown
+	}
 	r.sessions[session.ID] = session
 	r.assets[asset.ID] = asset
 	return nil
+}
+
+func (r *MediaRepository) ListMeetingSessions(_ context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.RecordingSession, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := []domain.RecordingSession{}
+	for _, session := range r.sessions {
+		if session.WorkspaceID == workspaceID && session.MeetingID == meetingID {
+			items = append(items, session)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].CreatedAt.Before(items[j].CreatedAt)
+	})
+	return items, nil
 }
 
 func (r *MediaRepository) find(workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, bool) {

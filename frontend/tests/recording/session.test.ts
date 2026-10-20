@@ -24,10 +24,12 @@ class Recorder implements RecorderLike {
 function server(options: { failCreate?: boolean } = {}) {
   const deleted: string[] = [];
   const finalized: Array<{ count: number; duration: number | null }> = [];
+  const captures: unknown[] = [];
   const chunks = new Map<number, string>();
-  const asset: ServerMediaAsset = { id: 'med_1', meetingId: 'mtg_1', mimeType: 'audio/webm;codecs=opus', status: 'uploading', durationSeconds: null, sizeBytes: 0, createdAt: '', updatedAt: '' };
+  const asset: ServerMediaAsset = { id: 'med_1', meetingId: 'mtg_1', mimeType: 'audio/webm;codecs=opus', status: 'uploading', durationSeconds: null, sizeBytes: 0, createdAt: '', updatedAt: '', capture: null };
   const media: ServerMediaClient = {
-    createRecording: async () => {
+    createRecording: async (_meetingId, _mime, capture) => {
+      captures.push(capture);
       if (options.failCreate) throw new VoxaTransportError('network', 'offline');
       return { asset, recordingSessionId: 'rec_1', maxChunkBytes: 1 << 20, maxTotalBytes: 1 << 30 };
     },
@@ -38,7 +40,7 @@ function server(options: { failCreate?: boolean } = {}) {
     getPlaybackUrl: async () => ({ url: '', expiresAt: '' }),
     deleteMedia: async (id) => void deleted.push(id),
   };
-  return { media, deleted, finalized, chunks };
+  return { media, deleted, finalized, chunks, captures };
 }
 
 function setup(getUserMedia: () => Promise<MediaStream>, options: { failCreate?: boolean } = {}) {
@@ -102,12 +104,22 @@ describe('RecordingSessionController', () => {
     expect(stopped).toBe(true);
   });
 
-  test('reports what is captured while recording', async () => {
-    const { session } = setup(async () => stream());
+  test('reports what is captured while recording, and sends capture provenance at creation', async () => {
+    const { session, captures } = setup(async () => stream());
     await session.start('mtg_1', null, 'microphone');
     expect(session.getState().capture).toEqual({ mode: 'microphone', microphone: true, shared: null });
+    expect(captures).toEqual([{ mode: 'microphone', client: 'web', sharedSurface: null }]);
     await session.stop();
     await settle();
     expect(session.getState().capture).toBeNull();
+  });
+});
+
+describe('capture provenance', () => {
+  test('maps capture descriptions to the server model without anything identifying', async () => {
+    const { captureProvenance } = await import('../../src/web/recording/session');
+    expect(captureProvenance({ mode: 'microphone+shared', microphone: true, shared: { surface: 'browser' } })).toEqual({ mode: 'microphone_and_shared_audio', client: 'web', sharedSurface: 'browser' });
+    expect(captureProvenance({ mode: 'shared', microphone: false, shared: { surface: 'window' } })).toEqual({ mode: 'shared_audio', client: 'web', sharedSurface: 'window' });
+    expect(captureProvenance({ mode: 'microphone', microphone: true, shared: null })).toEqual({ mode: 'microphone', client: 'web', sharedSurface: null });
   });
 });

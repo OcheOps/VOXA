@@ -46,6 +46,7 @@ export interface WaveShaperNodeLike extends AudioNodeLike { curve: Float32Array 
 export interface MediaStreamDestinationLike extends AudioNodeLike { stream: MediaStream }
 export interface AudioContextLike {
   readonly state: string;
+  onstatechange?: (() => void) | null;
   resume(): Promise<void>;
   close(): Promise<void>;
   createMediaStreamSource(stream: MediaStream): AudioNodeLike;
@@ -191,7 +192,11 @@ export class MixGraph {
   private readonly limiter: WaveShaperNodeLike;
   private readonly destination: MediaStreamDestinationLike;
 
+  /** Called when the AudioContext changes state (e.g. suspended by the browser). */
+  onStateChange: ((state: string) => void) | null = null;
+
   constructor(private readonly context: AudioContextLike) {
+    if ('onstatechange' in context) context.onstatechange = () => this.onStateChange?.(context.state);
     this.destination = context.createMediaStreamDestination();
     this.limiter = context.createWaveShaper();
     this.limiter.curve = softLimiterCurve();
@@ -242,6 +247,7 @@ export class MixGraph {
   }
 
   async close(): Promise<void> {
+    if ('onstatechange' in this.context) this.context.onstatechange = null;
     for (const kind of [...this.inputs.keys()]) this.remove(kind);
     this.limiter.disconnect();
     this.destination.stream.getTracks().forEach((track) => track.stop());
@@ -249,11 +255,40 @@ export class MixGraph {
   }
 }
 
+/** Precise message when the shared source had no audio, by what was shared. */
+export function noSharedAudioMessage(surface: NonNullable<CaptureDescription['shared']>['surface']): string {
+  if (surface === 'window' || surface === 'monitor') {
+    return `You shared ${surface === 'window' ? 'a window' : 'your screen'}, and the browser did not include its audio. Choose the meeting tab in the share dialog and turn on “Share tab audio”.`;
+  }
+  if (surface === 'browser') {
+    return 'The shared tab did not include audio. Share the meeting tab again and make sure “Share tab audio” is turned on.';
+  }
+  return CAPTURE_FAILURE_MESSAGES['no-shared-audio'];
+}
+
+/**
+ * Local capture diagnostics: what happened to sources and the recorder.
+ * Never contains media, transcript text, URLs or tab titles; kept in memory
+ * for debugging and tests, not sent anywhere.
+ */
+export type CaptureDiagnosticType =
+  | 'capture-requested' | 'shared-track-started' | 'shared-audio-missing' | 'microphone-track-started' | 'audio-context'
+  | 'recorder-started' | 'shared-track-ended' | 'microphone-track-ended' | 'fallback' | 'recorder-stopped' | 'recorder-error' | 'capture-failed';
+
+export interface CaptureDiagnostic {
+  /** Milliseconds since the page's time origin. */
+  at: number;
+  type: CaptureDiagnosticType;
+  detail?: Record<string, string | number | boolean | null>;
+}
+
+export const MAX_CAPTURE_DIAGNOSTICS = 200;
+
 export class CaptureError extends Error {
   readonly reason: CaptureFailure;
 
-  constructor(reason: CaptureFailure) {
-    super(CAPTURE_FAILURE_MESSAGES[reason]);
+  constructor(reason: CaptureFailure, message?: string) {
+    super(message ?? CAPTURE_FAILURE_MESSAGES[reason]);
     this.name = 'RecordingPermissionError';
     this.reason = reason;
   }

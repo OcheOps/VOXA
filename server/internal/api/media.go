@@ -115,13 +115,14 @@ func (s *Server) createRecording(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	start, err := s.media.CreateRecording(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId")), input.MimeType)
+	start, err := s.media.CreateRecordingWithCapture(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId")), input.MimeType, input.Capture.toDomain())
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
+	asset := withCapture(mediaAssetFromDomain(start.Asset), start.Asset, map[domain.RecordingSessionID]domain.CaptureProvenance{start.Session.ID: start.Session.Capture})
 	writeJSON(w, http.StatusCreated, createRecordingResponse{
-		RecordingSession: recordingSessionFromDomain(start.Session), MediaAsset: mediaAssetFromDomain(start.Asset), Upload: s.uploadDTO(start.Upload),
+		RecordingSession: recordingSessionFromDomain(start.Session), MediaAsset: asset, Upload: s.uploadDTO(start.Upload),
 	})
 }
 
@@ -131,9 +132,14 @@ func (s *Server) listMeetingMedia(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
+	captures, err := s.media.MeetingCaptures(r.Context(), workspaceID(r), domain.MeetingID(r.PathValue("meetingId")))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
 	items := make([]mediaAssetDTO, 0, len(assets))
 	for _, asset := range assets {
-		items = append(items, mediaAssetFromDomain(asset))
+		items = append(items, withCapture(mediaAssetFromDomain(asset), asset, captures))
 	}
 	writeJSON(w, http.StatusOK, meetingMediaResponse{Items: items})
 }
@@ -144,7 +150,7 @@ func (s *Server) getMediaAsset(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, mediaAssetResponse{MediaAsset: mediaAssetFromDomain(asset)})
+	writeJSON(w, http.StatusOK, mediaAssetResponse{MediaAsset: s.assetWithCapture(r, asset)})
 }
 
 func (s *Server) deleteMediaAsset(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +211,17 @@ func (s *Server) finalizeMedia(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, mediaAssetResponse{MediaAsset: mediaAssetFromDomain(asset)})
+	writeJSON(w, http.StatusOK, mediaAssetResponse{MediaAsset: s.assetWithCapture(r, asset)})
+}
+
+// assetWithCapture adds provenance for single-asset responses; a lookup
+// failure only omits it.
+func (s *Server) assetWithCapture(r *http.Request, asset domain.MediaAsset) mediaAssetDTO {
+	captures, err := s.media.MeetingCaptures(r.Context(), asset.WorkspaceID, asset.MeetingID)
+	if err != nil {
+		return mediaAssetFromDomain(asset)
+	}
+	return withCapture(mediaAssetFromDomain(asset), asset, captures)
 }
 
 func (s *Server) playbackURL(w http.ResponseWriter, r *http.Request) {

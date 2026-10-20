@@ -1,4 +1,4 @@
-import type { IsoDateTime, JsonValue, MediaAsset, Meeting, ProcessingJob, RecordingSession, Summary, Transcript, WorkspaceRole } from './domain.js';
+import type { CaptureClient, CaptureMode, IsoDateTime, JsonValue, MediaAsset, Meeting, ProcessingJob, RecordingSession, SharedSurface, Summary, Transcript, WorkspaceRole } from './domain.js';
 import type { CredentialStatus, CredentialWriteRequest } from './credentials.js';
 import type { MediaAssetId, MeetingId, ProcessingJobId, TranscriptId, UserId, WorkspaceId } from './ids.js';
 
@@ -53,7 +53,8 @@ export const WORKSPACE_SELECTION_REQUIRED = 'workspace_selection_required' as co
  * Finalize requires exactly chunks 0..chunkCount-1 (409 `missing_chunks` /
  * `unexpected_chunks`) and is idempotent.
  */
-export interface CreateRecordingRequest { mimeType: string; }
+/** `capture` is optional: omitted (older clients) is stored as unknown. */
+export interface CreateRecordingRequest { mimeType: string; capture?: { mode: CaptureMode; client: CaptureClient; sharedSurface?: SharedSurface | null }; }
 export interface MediaUpload {
   mediaAssetId: MediaAssetId;
   status: MediaAsset['status'];

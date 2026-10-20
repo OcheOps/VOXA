@@ -151,6 +151,15 @@ Media routes and their semantics are described in
 `docs/voxa-web-recording.md`. `MediaAsset` gained `status` (`uploading`,
 `ready`, `failed`) and `updatedAt`, an additive change.
 
+Capture provenance (additive): `CreateRecordingRequest.capture` is optional
+`{mode, client, sharedSurface?}` (`mode`: `microphone`, `shared_audio`,
+`microphone_and_shared_audio`; `client`: `web`, `desktop`, `extension`,
+`android`; `sharedSurface`: `browser`, `window`, `monitor`). Omitted means
+`unknown`; unknown values or extra fields are rejected with 400.
+`RecordingSession.capture` and `MediaAsset.capture` return it; older
+servers omit both, which clients treat as unknown. Upload, chunk and
+finalize semantics and MediaAsset identity are unchanged.
+
 Processing routes are described in `docs/server-processing.md`.
 `MediaTranscriptResponse` is `{mediaAssetId, state, error, transcript}` with
 `state` one of `none`, `preparing`, `transcribing`, `ready`, `failed`,

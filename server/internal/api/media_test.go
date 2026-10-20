@@ -142,7 +142,11 @@ func TestRecordingUploadLifecycle(t *testing.T) {
 	body := jsonBody(t, created)
 	assertKeys(t, body, "recordingSession", "mediaAsset", "upload")
 	asset := body["mediaAsset"].(map[string]any)
-	assertKeys(t, asset, "id", "workspaceId", "meetingId", "recordingSessionId", "kind", "mimeType", "status", "durationSeconds", "sizeBytes", "createdAt", "updatedAt")
+	assertKeys(t, asset, "id", "workspaceId", "meetingId", "recordingSessionId", "kind", "mimeType", "status", "durationSeconds", "sizeBytes", "createdAt", "updatedAt", "capture")
+	// A client that does not report provenance (older web builds) is recorded as unknown.
+	if capture := asset["capture"].(map[string]any); capture["mode"] != "unknown" || capture["client"] != "unknown" || capture["sharedSurface"] != nil {
+		t.Fatalf("default capture = %v", capture)
+	}
 	if asset["status"] != "uploading" || asset["mimeType"] != "audio/webm;codecs=opus" || body["recordingSession"].(map[string]any)["status"] != "recording" {
 		t.Fatalf("created = %v", body)
 	}

@@ -121,6 +121,48 @@ func mediaError(code ErrorCode, op, reason string, err error) error {
 }
 
 func (s *MediaService) CreateRecording(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID, mimeType string) (RecordingStart, error) {
+	return s.CreateRecordingWithCapture(ctx, workspaceID, meetingID, mimeType, domain.UnknownCapture())
+}
+
+// ValidateCapture checks client-reported provenance against the known
+// values. Empty mode/client mean unknown (older clients).
+func ValidateCapture(capture domain.CaptureProvenance) (domain.CaptureProvenance, error) {
+	if capture.Mode == "" {
+		capture.Mode = domain.CaptureModeUnknown
+	}
+	if capture.Client == "" {
+		capture.Client = domain.CaptureClientUnknown
+	}
+	switch capture.Mode {
+	case domain.CaptureMicrophone, domain.CaptureSharedAudio, domain.CaptureMicrophoneAndSharedAudio, domain.CaptureModeUnknown:
+	default:
+		return capture, validation("capture.mode", "is not a known capture mode")
+	}
+	switch capture.Client {
+	case domain.CaptureClientWeb, domain.CaptureClientDesktop, domain.CaptureClientExtension, domain.CaptureClientAndroid, domain.CaptureClientUnknown:
+	default:
+		return capture, validation("capture.client", "is not a known capture client")
+	}
+	if capture.SharedSurface != nil {
+		switch *capture.SharedSurface {
+		case "browser", "window", "monitor", "unknown":
+		default:
+			return capture, validation("capture.sharedSurface", "must be browser, window, monitor or unknown")
+		}
+		if capture.Mode == domain.CaptureMicrophone {
+			return capture, validation("capture.sharedSurface", "is only valid when shared audio is captured")
+		}
+	}
+	return capture, nil
+}
+
+// CreateRecordingWithCapture starts a recording and stores its capture provenance.
+func (s *MediaService) CreateRecordingWithCapture(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID, mimeType string,
+	capture domain.CaptureProvenance) (RecordingStart, error) {
+	capture, err := ValidateCapture(capture)
+	if err != nil {
+		return RecordingStart{}, err
+	}
 	normalized := NormalizeMimeType(mimeType)
 	if normalized == "" {
 		return RecordingStart{}, validation("mimeType", "is not a supported recording format")
@@ -144,7 +186,7 @@ func (s *MediaService) CreateRecording(ctx context.Context, workspaceID domain.W
 	}
 	now := s.timestamp()
 	session := domain.RecordingSession{ID: domain.RecordingSessionID(sessionID), WorkspaceID: workspaceID, MeetingID: meetingID,
-		Status: domain.RecordingSessionRecording, StartedAt: now, CreatedAt: now, UpdatedAt: now}
+		Status: domain.RecordingSessionRecording, Capture: capture, StartedAt: now, CreatedAt: now, UpdatedAt: now}
 	sessionRef := session.ID
 	asset := domain.MediaAsset{ID: domain.MediaAssetID(assetID), WorkspaceID: workspaceID, MeetingID: meetingID, RecordingSessionID: &sessionRef,
 		Kind: domain.MediaAssetAudio, MimeType: normalized, Status: domain.MediaAssetUploading, StorageKey: storageKey, CreatedAt: now, UpdatedAt: now}
@@ -328,6 +370,20 @@ func (s *MediaService) ListMeetingMedia(ctx context.Context, workspaceID domain.
 		return nil, storageError(op, err)
 	}
 	return assets, nil
+}
+
+// MeetingCaptures returns capture provenance by recording session, for
+// labelling a meeting's recordings.
+func (s *MediaService) MeetingCaptures(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) (map[domain.RecordingSessionID]domain.CaptureProvenance, error) {
+	sessions, err := s.media.ListMeetingSessions(ctx, workspaceID, meetingID)
+	if err != nil {
+		return nil, storageError("media.captures", err)
+	}
+	captures := make(map[domain.RecordingSessionID]domain.CaptureProvenance, len(sessions))
+	for _, session := range sessions {
+		captures[session.ID] = session.Capture
+	}
+	return captures, nil
 }
 
 func (s *MediaService) GetAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, error) {

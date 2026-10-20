@@ -1,5 +1,15 @@
 import type { BrowserRecordingClient, CaptureDescription, CaptureMode } from '@/clients/browser/recording-client';
+import type { RecordingCaptureProvenance } from '@/clients/contracts';
 import type { RecordingUploadCoordinator } from './upload-coordinator';
+
+const PROVENANCE_MODES: Record<CaptureMode, RecordingCaptureProvenance['mode']> = {
+  microphone: 'microphone', 'microphone+shared': 'microphone_and_shared_audio', shared: 'shared_audio',
+};
+
+/** Capture provenance reported to the server: mode, client kind and shared surface only. */
+export function captureProvenance(capture: CaptureDescription): RecordingCaptureProvenance {
+  return { mode: PROVENANCE_MODES[capture.mode], client: 'web', sharedSurface: capture.shared?.surface ?? null };
+}
 
 export type SessionPhase = 'idle' | 'starting' | 'recording' | 'paused' | 'stopping';
 
@@ -56,16 +66,16 @@ export class RecordingSessionController {
       return;
     }
     this.set({ phase: 'starting', meetingId, mediaAssetId: null, error: null, warning: null, capture: null });
-    const prepared = this.recorder.prepare({ mode: captureMode, microphoneDeviceName });
+    let prepared: CaptureDescription;
     try {
-      await prepared;
+      prepared = await this.recorder.prepare({ mode: captureMode, microphoneDeviceName });
     } catch (error) {
       this.set({ phase: 'idle', error: error instanceof Error ? error.message : 'Recording could not start.' });
       return;
     }
     let mediaAssetId: string;
     try {
-      mediaAssetId = (await this.uploads.begin(meetingId, mimeType)).mediaAssetId;
+      mediaAssetId = (await this.uploads.begin(meetingId, mimeType, captureProvenance(prepared))).mediaAssetId;
     } catch {
       await this.recorder.releasePrepared();
       this.set({ phase: 'idle', error: 'Could not start a recording on the server. Check your connection and try again.' });

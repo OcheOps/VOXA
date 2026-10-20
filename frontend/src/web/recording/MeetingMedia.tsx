@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { describeError } from '../errors';
 import { formatDuration, useUploadJobs } from './hooks';
 import { TranscriptPanel, type SeekTarget } from './TranscriptPanel';
+import { provenanceLabel } from './capture-ui';
 
 /**
  * Streams a ready recording through a short-lived signed URL with HTTP range
@@ -65,6 +66,7 @@ function Recording({ meetingId, asset, onChanged, onDelete }: { meetingId: strin
       <div className="flex items-center gap-2 text-xs text-gray-500">
         <span>{new Date(asset.createdAt).toLocaleString()}</span>
         <span>· {formatDuration(asset.durationSeconds)}</span>
+        {provenanceLabel(asset.capture) && <span title="How this recording was captured">· {provenanceLabel(asset.capture)}</span>}
         {asset.status === 'ready' && <span>· {(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>}
         <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={onDelete} aria-label="Delete recording">Delete</Button>
       </div>

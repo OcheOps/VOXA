@@ -13,6 +13,10 @@ import { UnsupportedOperationError } from '../errors';
 import {
   CaptureError,
   DISPLAY_MEDIA_OPTIONS,
+  MAX_CAPTURE_DIAGNOSTICS,
+  noSharedAudioMessage,
+  type CaptureDiagnostic,
+  type CaptureDiagnosticType,
   MixGraph,
   classifyDisplayError,
   classifyMicrophoneError,
@@ -26,7 +30,7 @@ import {
   type CaptureMode,
 } from './capture';
 
-export type { BrowserCaptureCapabilities, CaptureDescription, CaptureMode } from './capture';
+export type { BrowserCaptureCapabilities, CaptureDescription, CaptureDiagnostic, CaptureMode } from './capture';
 
 /**
  * Chunk cadence. MediaRecorder emits one encoded piece per timeslice; each
@@ -170,8 +174,9 @@ export class BrowserRecordingClient implements RecordingClient {
     starting: new Emitter<void>(), started: new Emitter<void>(), stopped: new Emitter<RecordingStoppedEvent>(),
     paused: new Emitter<void>(), resumed: new Emitter<void>(), chunk: new Emitter<RecordedChunk>(),
     microphoneUnavailable: new Emitter<void>(), error: new Emitter<string>(),
-    captureChanged: new Emitter<CaptureDescription | null>(), warning: new Emitter<string>(),
+    captureChanged: new Emitter<CaptureDescription | null>(), warning: new Emitter<string>(), diagnostic: new Emitter<CaptureDiagnostic>(),
   };
+  private readonly diagnostics: CaptureDiagnostic[] = [];
   /** Feature-detected browser capture support (also in capabilities.browserCapture). */
   readonly browserCapture: BrowserCaptureCapabilities;
 
@@ -219,6 +224,22 @@ export class BrowserRecordingClient implements RecordingClient {
   /** Non-fatal problems during a recording (e.g. tab sharing stopped). */
   onCaptureWarning(callback: (message: string) => void): () => void {
     return this.events.warning.on(callback);
+  }
+
+  /** Recent capture events (bounded; no media or content). */
+  getDiagnostics(): CaptureDiagnostic[] {
+    return [...this.diagnostics];
+  }
+
+  onDiagnostic(callback: (event: CaptureDiagnostic) => void): () => void {
+    return this.events.diagnostic.on(callback);
+  }
+
+  private diagnose(type: CaptureDiagnosticType, detail?: CaptureDiagnostic['detail']): void {
+    const event: CaptureDiagnostic = { at: Math.round(globalThis.performance?.now?.() ?? this.env.now()), type, ...(detail ? { detail } : {}) };
+    this.diagnostics.push(event);
+    if (this.diagnostics.length > MAX_CAPTURE_DIAGNOSTICS) this.diagnostics.splice(0, this.diagnostics.length - MAX_CAPTURE_DIAGNOSTICS);
+    this.events.diagnostic.emit(event);
   }
 
   getCapture(): CaptureDescription | null {
@@ -305,6 +326,7 @@ export class BrowserRecordingClient implements RecordingClient {
     let microphone: MediaStream | null = null;
     let graph: MixGraph | null = null;
     const description: CaptureDescription = { mode, microphone: false, shared: null };
+    this.diagnose('capture-requested', { mode });
     try {
       if (displayRequest) {
         try {
@@ -317,7 +339,11 @@ export class BrowserRecordingClient implements RecordingClient {
         // Voxa needs audio only: stop the video right away (browsers keep the
         // audio track running; verified in Chromium).
         shared.getVideoTracks().forEach((track) => track.stop());
-        if (audio.length === 0) throw new CaptureError('no-shared-audio');
+        if (audio.length === 0) {
+          this.diagnose('shared-audio-missing', { surface: description.shared?.surface ?? 'unknown' });
+          throw new CaptureError('no-shared-audio', noSharedAudioMessage(description.shared?.surface ?? 'unknown'));
+        }
+        this.diagnose('shared-track-started', { surface: description.shared?.surface ?? 'unknown', tracks: audio.length });
         shared = new this.env.MediaStream!(audio);
       }
       if (wantsMicrophone) {
@@ -328,13 +354,17 @@ export class BrowserRecordingClient implements RecordingClient {
           throw new CaptureError(classifyMicrophoneError(error));
         }
         description.microphone = true;
+        this.diagnose('microphone-track-started');
       }
       if (graphRequest) {
         graph = await graphRequest;
+        this.diagnose('audio-context', { state: graph.state });
+        graph.onStateChange = (state) => this.diagnose('audio-context', { state });
         graph.add('microphone', microphone!);
         graph.add('shared', shared!);
       }
     } catch (error) {
+      this.diagnose('capture-failed', { reason: error instanceof CaptureError ? error.reason : 'unexpected' });
       shared?.getTracks().forEach((track) => track.stop());
       microphone?.getTracks().forEach((track) => track.stop());
       const pending = graph ?? (graphRequest ? await graphRequest.catch(() => null) : null);
@@ -390,6 +420,7 @@ export class BrowserRecordingClient implements RecordingClient {
       this.events.chunk.emit({ index: this.chunkIndex++, data: event.data, mimeType: this.selectedMime! });
     };
     recorder.onerror = () => {
+      this.diagnose('recorder-error');
       this.events.error.emit('The recorder stopped unexpectedly.');
       void this.stop();
     };
@@ -405,6 +436,7 @@ export class BrowserRecordingClient implements RecordingClient {
     }
     this.startedAt = this.env.now();
     this.phase = 'recording';
+    this.diagnose('recorder-started', { mode: capture.mode, mimeType: this.selectedMime, timesliceMs: this.env.timesliceMs });
     this.events.started.emit();
     this.events.captureChanged.emit({ ...capture.description });
   }
@@ -422,6 +454,7 @@ export class BrowserRecordingClient implements RecordingClient {
       if (this.capture !== capture || (this.phase !== 'recording' && this.phase !== 'paused')) return;
       if (kind === 'microphone' && !capture.description.microphone) return;
       if (kind === 'shared' && !capture.description.shared) return;
+      this.diagnose(kind === 'microphone' ? 'microphone-track-ended' : 'shared-track-ended');
       if (kind === 'microphone') {
         capture.description.microphone = false;
         this.events.microphoneUnavailable.emit();
@@ -431,6 +464,7 @@ export class BrowserRecordingClient implements RecordingClient {
       const remaining = capture.description.microphone || capture.description.shared !== null;
       if (capture.graph && remaining) {
         capture.graph.remove(kind);
+        this.diagnose('fallback', { remaining: kind === 'shared' ? 'microphone' : 'shared' });
         this.events.warning.emit(kind === 'shared'
           ? 'Tab audio sharing stopped. Recording continues with your microphone only.'
           : 'Your microphone stopped. Recording continues with the shared audio only.');
@@ -463,6 +497,7 @@ export class BrowserRecordingClient implements RecordingClient {
       this.lastSummary = { chunkCount: 0, durationSeconds: this.activeMs(this.env.now()) / 1000, mimeType: this.selectedMime ?? '' };
     }
     this.lastSummary.chunkCount = this.chunkIndex;
+    this.diagnose('recorder-stopped', { chunks: this.chunkIndex });
     this.releaseDevices();
     this.phase = 'idle';
     this.events.stopped.emit({ message: 'stopped', meetingName: this.meetingName ?? undefined });

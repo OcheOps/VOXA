@@ -180,6 +180,11 @@ See `docs/server-processing.md`.
 
 See `docs/server-summaries.md`.
 
+`0007_capture_provenance.sql` adds `capture_mode`, `capture_client`
+(both `NOT NULL DEFAULT 'unknown'`, checked against known values) and
+nullable `shared_surface` to `recording_sessions`. Existing sessions become
+`unknown`; no media is rewritten. See `docs/voxa-web-meeting-capture.md`.
+
 ## Error translation and safety
 
 The adapter maps `pgx.ErrNoRows` to `ErrNotFound` and unique violations to

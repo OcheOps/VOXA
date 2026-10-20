@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useServerCapabilities, useWebRuntime } from '../context';
 import { formatDuration, useElapsedSeconds, useRecordingSession, useUnloadGuard, useUploadJobs } from './hooks';
 import type { UploadJobState } from './upload-coordinator';
-import { MEETING_SITE_HINTS, MODE_DESCRIPTIONS, MODE_LABELS, SHARE_INSTRUCTIONS, availableModes, captureSummary, sharedAudioNote } from './capture-ui';
+import { MEETING_SITE_HINTS, MEETING_SITE_HINTS_NOTE, MODE_DESCRIPTIONS, MODE_LABELS, SHARE_INSTRUCTIONS, availableModes, captureSummary, sharedAudioNote } from './capture-ui';
 
 export function uploadStatusText(job: UploadJobState): string {
   const local = job.pendingChunks > 0 ? `${job.pendingChunks} part${job.pendingChunks === 1 ? '' : 's'} saved on this device` : null;
@@ -110,6 +110,7 @@ export function RecordingPanel({ meetingId }: { meetingId: string }) {
             )}
             <details>
               <summary className="cursor-pointer">Tips for Google Meet, Teams, Zoom, Webex and WhatsApp Web</summary>
+              <p className="mt-1">{MEETING_SITE_HINTS_NOTE}</p>
               <ul className="mt-1 list-disc space-y-1 pl-4">
                 {MEETING_SITE_HINTS.map((hint) => (
                   <li key={hint.id}><span className="font-medium">{hint.name}</span> ({hint.hosts}): {hint.tip}</li>

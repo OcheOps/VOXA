@@ -1,4 +1,5 @@
 import type { BrowserCaptureCapabilities, CaptureDescription, CaptureMode } from '@/clients/browser/recording-client';
+import type { RecordingCaptureProvenance } from '@/clients/contracts';
 
 export const MODE_LABELS: Record<CaptureMode, string> = {
   microphone: 'Microphone only',
@@ -18,9 +19,29 @@ export const SHARE_INSTRUCTIONS =
 
 export function sharedAudioNote(capabilities: BrowserCaptureCapabilities): string | null {
   if (capabilities.sharedAudio === 'unknown') {
-    return 'This browser may share video without audio. Voxa checks the shared source and tells you if it has no audio.';
+    return 'Your browser may not provide shared tab audio. Voxa will verify after you choose a source.';
   }
   return null;
+}
+
+const PROVENANCE_LABELS: Record<string, string> = {
+  microphone: 'Microphone',
+  microphone_and_shared_audio: 'Meeting tab + microphone',
+  shared_audio: 'Meeting tab',
+};
+
+/**
+ * Short label for how a stored recording was captured; null when unknown
+ * (recordings from before provenance existed). Window/screen shares are
+ * named as such.
+ */
+export function provenanceLabel(capture: RecordingCaptureProvenance | null | undefined): string | null {
+  if (!capture || capture.mode === 'unknown') return null;
+  let label = PROVENANCE_LABELS[capture.mode] ?? null;
+  if (label && capture.sharedSurface && capture.sharedSurface !== 'browser' && capture.sharedSurface !== 'unknown') {
+    label = label.replace('Meeting tab', capture.sharedSurface === 'window' ? 'Shared window' : 'Shared screen');
+  }
+  return label;
 }
 
 const SURFACES = { browser: 'meeting tab audio', window: 'shared window audio', monitor: 'shared screen audio', unknown: 'shared audio' } as const;
@@ -38,7 +59,9 @@ export function captureSummary(capture: CaptureDescription | null): string {
 /**
  * Guidance for common browser meeting apps. Voxa cannot see which site the
  * shared tab shows; these are static tips, not detection, and nothing here
- * talks to the meeting provider.
+ * talks to the meeting provider. They describe only the tab-sharing step
+ * that Voxa has verified (tab audio capture in Chromium); live calls in each
+ * app have not been validated yet (docs/browser-capture-compatibility.md).
  */
 export interface MeetingSiteHint {
   id: string;
@@ -47,18 +70,18 @@ export interface MeetingSiteHint {
   tip: string;
 }
 
+const tabTip = (app: string) => `Join the call in a browser tab, then choose the ${app} tab in the share dialog and turn on “Share tab audio”.`;
+
 export const MEETING_SITE_HINTS: MeetingSiteHint[] = [
-  { id: 'meet', name: 'Google Meet', hosts: 'meet.google.com',
-    tip: 'Join the call in a browser tab, then choose that Google Meet tab in the share dialog with “Share tab audio” on.' },
-  { id: 'teams', name: 'Microsoft Teams (web)', hosts: 'teams.microsoft.com, teams.live.com',
-    tip: 'Use Teams in the browser (not the desktop app), then choose the Teams tab and share its audio.' },
-  { id: 'zoom', name: 'Zoom (web client)', hosts: 'app.zoom.us, zoom.us/wc',
-    tip: 'Choose “Join from your browser” so the call runs in a tab, then share that tab with its audio. Calls in the Zoom desktop app cannot be captured here.' },
-  { id: 'webex', name: 'Cisco Webex (web)', hosts: 'web.webex.com, *.webex.com',
-    tip: 'Join with the Webex web app, then choose the Webex tab and share its audio.' },
-  { id: 'whatsapp', name: 'WhatsApp Web', hosts: 'web.whatsapp.com',
-    tip: 'Only audio played inside the WhatsApp Web tab can be captured. Calls that open in the WhatsApp desktop or phone app are not in a tab; use “Microphone only” or the Voxa desktop app.' },
+  { id: 'meet', name: 'Google Meet', hosts: 'meet.google.com', tip: tabTip('Google Meet') },
+  { id: 'teams', name: 'Microsoft Teams (web)', hosts: 'teams.microsoft.com, teams.live.com', tip: tabTip('Teams') },
+  { id: 'zoom', name: 'Zoom (web client)', hosts: 'app.zoom.us', tip: tabTip('Zoom') },
+  { id: 'webex', name: 'Cisco Webex (web)', hosts: 'web.webex.com', tip: tabTip('Webex') },
+  { id: 'whatsapp', name: 'WhatsApp Web', hosts: 'web.whatsapp.com', tip: tabTip('WhatsApp Web') },
 ];
+
+/** Shown with the tips: what they are based on. */
+export const MEETING_SITE_HINTS_NOTE = 'Only audio playing inside the shared tab is recorded. Calls in desktop or phone apps are not in a tab and cannot be captured here. Voxa has not yet been validated with live calls in each app.';
 
 /** Tips are only useful for browsers that can actually share tab audio. */
 export function availableModes(capabilities: BrowserCaptureCapabilities | undefined): CaptureMode[] {

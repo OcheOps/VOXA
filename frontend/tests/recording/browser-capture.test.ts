@@ -274,6 +274,53 @@ describe('failures are specific and release what was acquired', () => {
   });
 });
 
+describe('source-loss regression and diagnostics', () => {
+  test('microphone ends first in a mixed recording: continue with the tab, warn, record the fallback', async () => {
+    const { client, mic, tabAudio, context } = setup();
+    const warnings: string[] = [];
+    client.onCaptureWarning((w) => warnings.push(w));
+    await client.start({ microphoneDeviceName: null, systemAudioDeviceName: null, meetingName: 'm', captureMode: 'microphone+shared' });
+    mic.end();
+    expect(await client.isRecording()).toBe(true);
+    expect(warnings).toEqual(['Your microphone stopped. Recording continues with the shared audio only.']);
+    expect(client.getCapture()).toEqual({ mode: 'microphone+shared', microphone: false, shared: { surface: 'browser' } });
+    expect(context()!.sources.find((s) => s.stream.getTracks()[0] === mic)!.node.disconnected).toBe(true);
+    tabAudio.end();
+    expect(await client.isRecording()).toBe(false);
+    const types = client.getDiagnostics().map((d) => d.type);
+    expect(types).toEqual(['capture-requested', 'shared-track-started', 'microphone-track-started', 'audio-context', 'recorder-started',
+      'microphone-track-ended', 'fallback', 'shared-track-ended', 'recorder-stopped']);
+    expect(client.getDiagnostics().find((d) => d.type === 'fallback')!.detail).toEqual({ remaining: 'shared' });
+    // Diagnostics carry only small, non-content fields.
+    expect(JSON.stringify(client.getDiagnostics()).length).toBeLessThan(2000);
+  });
+
+  test('microphone-only: a lost microphone stops the recording', async () => {
+    const { client, mic } = setup();
+    await client.start({ microphoneDeviceName: null, systemAudioDeviceName: null, meetingName: 'm', captureMode: 'microphone' });
+    mic.end();
+    expect(await client.isRecording()).toBe(false);
+    expect(client.getDiagnostics().map((d) => d.type)).toContain('microphone-track-ended');
+  });
+
+  test('a failed capture is recorded and the no-audio message names what was shared', async () => {
+    const { client } = setup({ display: 'no-audio' });
+    const error = await client.prepare({ mode: 'shared', microphoneDeviceName: null }).catch((e) => e);
+    expect(error.message).toBe('The shared tab did not include audio. Share the meeting tab again and make sure “Share tab audio” is turned on.');
+    expect(client.getDiagnostics().map((d) => d.type)).toEqual(['capture-requested', 'shared-audio-missing', 'capture-failed']);
+    expect(client.getDiagnostics().at(-1)!.detail).toEqual({ reason: 'no-shared-audio' });
+  });
+
+  test('diagnostics are bounded', async () => {
+    const { client } = setup();
+    for (let i = 0; i < 150; i++) {
+      await client.prepare({ mode: 'microphone', microphoneDeviceName: null });
+      await client.releasePrepared();
+    }
+    expect(client.getDiagnostics().length).toBe(200);
+  });
+});
+
 describe('soft limiter', () => {
   test('is transparent at nominal levels and never reaches full scale', () => {
     const curve = softLimiterCurve(4097);

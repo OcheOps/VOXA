@@ -46,6 +46,8 @@ type MediaRepository interface {
 	GetAsset(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID) (domain.MediaAsset, error)
 	// ListMeetingAssets returns a meeting's assets ordered by (created_at, id).
 	ListMeetingAssets(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.MediaAsset, error)
+	// ListMeetingSessions returns a meeting's recording sessions (capture provenance).
+	ListMeetingSessions(ctx context.Context, workspaceID domain.WorkspaceID, meetingID domain.MeetingID) ([]domain.RecordingSession, error)
 	// TouchUpload records upload activity on an uploading asset.
 	TouchUpload(ctx context.Context, workspaceID domain.WorkspaceID, assetID domain.MediaAssetID, at time.Time) error
 	// CompleteUpload marks an uploading asset ready and its session completed.

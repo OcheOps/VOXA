@@ -22,7 +22,7 @@ class FakeServer implements ServerMediaClient {
   async createRecording(meetingId: string, mimeType: string) {
     this.guard();
     const id = `med_${++this.next}`;
-    const asset: ServerMediaAsset = { id, meetingId, mimeType, status: 'uploading', durationSeconds: null, sizeBytes: 0, createdAt: 't', updatedAt: 't' };
+    const asset: ServerMediaAsset = { id, meetingId, mimeType, status: 'uploading', durationSeconds: null, sizeBytes: 0, createdAt: 't', updatedAt: 't', capture: null };
     this.assets.set(id, asset);
     this.chunks.set(id, new Map());
     return { asset, recordingSessionId: `rec_${this.next}`, maxChunkBytes: 1 << 20, maxTotalBytes: 1 << 30 };
